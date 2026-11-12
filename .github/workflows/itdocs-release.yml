@@ -1,12 +1,14 @@
 # Builds the console of this fork (REST API extensions) and publishes it as
-# a GitHub release of the fork. Start it by pushing a tag such as
-# v0.48.2-itdocs.1 (official version 0.48.2, our build 1), or by hand under
-# Actions -> itdocs release.
+# a GitHub release of the fork. Start it by writing the new tag, such as
+# v0.48.2-itdocs.1 (official version 0.48.2, our build 1), into
+# packaging/itdocs/RELEASE on the itdocs branch, or by pushing that tag.
 name: itdocs release
 
 on:
   push:
     tags: ['v*-itdocs.*']
+    branches: [itdocs]
+    paths: ['packaging/itdocs/RELEASE']
   workflow_dispatch:
     inputs:
       tag:
@@ -32,8 +34,14 @@ jobs:
       - name: Version from the tag
         id: v
         env:
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG_INPUT: ${{ github.event.inputs.tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
+          if [ -n "$TAG_INPUT" ]; then TAG=$TAG_INPUT
+          elif [ "$REF_TYPE" = tag ]; then TAG=$REF_NAME
+          else TAG=$(tr -d ' \r\n' < packaging/itdocs/RELEASE)
+          fi
           case "$TAG" in
             v[0-9]*.[0-9]*.[0-9]*-itdocs.[0-9]*) ;;
             *) echo "tag must look like v0.48.2-itdocs.1, not $TAG" >&2; exit 1 ;;
