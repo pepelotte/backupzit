@@ -13,7 +13,10 @@
   <tr><th>Metoda a cesta</th><th>Role</th><th>Vrací</th></tr>
   <tr><td><code>GET /api/v1/status</code></td><td>Čtenář</td><td>Celkový stav: agenti online, chyby a varování za 24 h, aktivní běhy, nezkontrolované podezřelé zálohy, <code>"ok": true|false</code></td></tr>
   <tr><td><code>GET /api/v1/agents</code></td><td>Čtenář</td><td>Agenty se systémem, verzí, stavem online a posledním kontaktem</td></tr>
-  <tr><td><code>GET /api/v1/jobs</code>, <code>GET /api/v1/jobs/{id}</code></td><td>Čtenář</td><td>Úlohy s plánem, dalším během a posledním výsledkem</td></tr>
+  <tr><td><code>GET /api/v1/jobs</code>, <code>GET /api/v1/jobs/{id}</code></td><td>Čtenář</td><td>Úlohy s plánem, dalším během a posledním výsledkem; také jejich nastavení: <code>schedule_spec</code>, <code>retention</code>, <code>options</code>, <code>image_disk</code>, <code>image_partitions</code></td></tr>
+  <tr><td><code>POST /api/v1/jobs</code></td><td>Operátor záloh</td><td>Vytvoří úlohu: soubory, obraz disku (jeden disk, všechny pomocí <code>-1</code> nebo vybrané oddíly), systém Linux nebo kopii, např. <code>{"name": "PC-07", "kind": "image", "agent_id": 12, "target_id": 3, "image_disk": 0, "image_partitions": [3], "schedule": {"kind": "daily", "days": [1, 2, 3, 4, 5], "times": ["22:00"]}, "retention": {"keep_daily": 14}}</code>; kontroluje se jako ve formuláři úlohy. Příkazy před zálohou a po ní vyžadují roli Správce</td></tr>
+  <tr><td><code>PATCH /api/v1/jobs/{id}</code></td><td>Operátor záloh</td><td>Změní název, cesty, vyloučení, plán, uchovávání nebo možnosti; neuvedená pole zůstanou. Při schválení čtyř očí se kratší uchovávání mění v konzoli (409)</td></tr>
+  <tr><td><code>DELETE /api/v1/jobs/{id}</code></td><td>Operátor záloh</td><td>Smaže úlohu; její zálohy zůstanou v úložišti. Při schválení čtyř očí jen v konzoli (409)</td></tr>
   <tr><td><code>POST /api/v1/jobs/{id}/run</code></td><td>Operátor obnovy</td><td>Spustí úlohu hned: <code>{"run_id": 123}</code> (202), nebo 409, pokud již běh probíhá</td></tr>
   <tr><td><code>POST /api/v1/jobs/{id}/test</code></td><td>Operátor obnovy</td><td>Spustí test obnovy nejnovější zálohy úlohy</td></tr>
   <tr><td><code>GET /api/v1/runs?job=&amp;agent=&amp;status=&amp;limit=</code></td><td>Čtenář</td><td>Nedávné běhy, nejnovější první (výchozí 100, nejvýše 1000)</td></tr>
@@ -31,6 +34,8 @@
   <tr><td><code>GET /api/v1/storage</code></td><td>Čtenář</td><td>Obsazené místo podle úložiště, kapacita a volné místo, pokud jsou známy, denní růst a dny do zaplnění</td></tr>
   <tr><td><code>GET /api/v1/metrics</code></td><td>Čtenář</td><td>Metriky v textovém formátu Prometheus (viz níže)</td></tr>
   <tr><td><code>POST /api/v1/runs/{id}/restore</code></td><td>Operátor obnovy</td><td>Obnoví soubory zálohy pomocí agenta: tělo <code>{"target": "D:/Restore"}</code> nebo <code>{"original": true}</code>, volitelně <code>"paths"</code>, <code>"agent_id"</code> a <code>"verify": true</code>; vrací <code>{"run_id": 125}</code></td></tr>
+  <tr><td><code>GET /api/v1/runs/{id}/files?path=</code></td><td>Operátor obnovy</td><td>Vypíše složku zálohy souborů nebo systému Linux na síťovém úložišti (<code>path=</code> z předchozího výpisu): <code>{"entries": [{"name": "…", "path": "…", "dir": false, "size": 16, "modified": "…"}]}</code></td></tr>
+  <tr><td><code>POST /api/v1/runs/{id}/files/download</code></td><td>Operátor obnovy</td><td>Stáhne soubory zálohy: tělo <code>{"paths": ["…"]}</code>; jeden soubor tak, jak je, více souborů nebo složky jako archiv ZIP</td></tr>
   <tr><td><code>GET /api/v1/openapi.json</code></td><td>bez tokenu</td><td>Specifikace OpenAPI 3 tohoto API pro nástroje a generátory klientů (také v repozitáři: <code>internal/server/openapi.json</code>)</td></tr>
 </table>
 <p>Období: <code>today</code>, <code>yesterday</code>, <code>last7</code>, <code>last30</code>, <code>last90</code>, <code>thisweek</code>, <code>lastweek</code>, <code>thismonth</code>, <code>lastmonth</code> nebo <code>custom</code> s <code>from=2026-09-01&amp;to=2026-09-30</code>.</p>

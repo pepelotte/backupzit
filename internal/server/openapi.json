@@ -219,6 +219,54 @@
         ],
         "type": "object"
       },
+      "FileEntry": {
+        "properties": {
+          "dir": {
+            "type": "boolean"
+          },
+          "modified": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "description": "Use in path= and in downloads",
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "FileList": {
+        "properties": {
+          "display_path": {
+            "description": "The path as on the agent, e.g. C:\\Users",
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/FileEntry"
+            },
+            "type": "array"
+          },
+          "path": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "windows": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "Job": {
         "properties": {
           "agent": {
@@ -231,9 +279,31 @@
           "enabled": {
             "type": "boolean"
           },
+          "excludes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "group_id": {
+            "description": "Part of a job for several agents (changed in the console)",
+            "format": "int64",
+            "type": "integer"
+          },
           "id": {
             "format": "int64",
             "type": "integer"
+          },
+          "image_disk": {
+            "description": "Image jobs: disk number, -1 = all disks",
+            "type": "integer"
+          },
+          "image_partitions": {
+            "description": "Image jobs: only these partitions (none = the whole disk)",
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
           },
           "kind": {
             "example": "files",
@@ -259,11 +329,17 @@
             "nullable": true,
             "type": "string"
           },
+          "options": {
+            "$ref": "#/components/schemas/JobOptionsOut"
+          },
           "paths": {
             "items": {
               "type": "string"
             },
             "type": "array"
+          },
+          "retention": {
+            "$ref": "#/components/schemas/Retention"
           },
           "rpo_hours": {
             "type": "integer"
@@ -274,6 +350,9 @@
           "schedule": {
             "description": "In words",
             "type": "string"
+          },
+          "schedule_spec": {
+            "$ref": "#/components/schemas/Schedule"
           },
           "source_job_id": {
             "description": "Copy jobs",
@@ -286,6 +365,223 @@
           "target_id": {
             "format": "int64",
             "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "JobCreate": {
+        "description": "Unknown fields are an error.",
+        "properties": {
+          "agent_id": {
+            "description": "Not for copy jobs",
+            "format": "int64",
+            "type": "integer"
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "excludes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "image_disk": {
+            "description": "Image jobs: disk number from GET /api/v1/agents/{id}, -1 = all disks",
+            "type": "integer"
+          },
+          "image_partitions": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "description": "Jobs for VMs, databases, NAS shares and Microsoft 365 are created in the console",
+            "enum": [
+              "files",
+              "image",
+              "system",
+              "copy"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "options": {
+            "$ref": "#/components/schemas/JobOptions"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retention": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Retention"
+              }
+            ],
+            "description": "Default: keep_last 3, keep_daily 7, keep_weekly 4, keep_monthly 6"
+          },
+          "schedule": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Schedule"
+              }
+            ],
+            "description": "Default: manual"
+          },
+          "source_job_id": {
+            "description": "Copy jobs: the job whose backups are copied",
+            "format": "int64",
+            "type": "integer"
+          },
+          "target_id": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "target_id"
+        ],
+        "type": "object"
+      },
+      "JobOptions": {
+        "description": "A missing field keeps the current value (on creation: the default).",
+        "properties": {
+          "command_minutes": {
+            "description": "Administrator only; default 30",
+            "type": "integer"
+          },
+          "compression": {
+            "enum": [
+              "",
+              "fast",
+              "max",
+              "off"
+            ],
+            "type": "string"
+          },
+          "limit_from": {
+            "description": "Speed limit from this hour",
+            "type": "integer"
+          },
+          "limit_mbps": {
+            "description": "Speed limit, 0 = none",
+            "type": "integer"
+          },
+          "limit_to": {
+            "description": "Speed limit to this hour",
+            "type": "integer"
+          },
+          "max_hours": {
+            "description": "Time limit of a run, 0 = none",
+            "type": "integer"
+          },
+          "post_command": {
+            "description": "Administrator only",
+            "type": "string"
+          },
+          "pre_command": {
+            "description": "Administrator only",
+            "type": "string"
+          },
+          "rpo_hours": {
+            "description": "0 = none",
+            "type": "integer"
+          },
+          "window": {
+            "description": "Backup window: runs start only between window_from and window_to",
+            "type": "boolean"
+          },
+          "window_from": {
+            "type": "integer"
+          },
+          "window_to": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "JobOptionsOut": {
+        "properties": {
+          "compression": {
+            "enum": [
+              "",
+              "fast",
+              "max",
+              "off"
+            ],
+            "type": "string"
+          },
+          "has_commands": {
+            "type": "boolean"
+          },
+          "limit_from": {
+            "description": "Speed limit from this hour",
+            "type": "integer"
+          },
+          "limit_mbps": {
+            "description": "Speed limit, 0 = none",
+            "type": "integer"
+          },
+          "limit_to": {
+            "description": "Speed limit to this hour",
+            "type": "integer"
+          },
+          "max_hours": {
+            "description": "Time limit of a run, 0 = none",
+            "type": "integer"
+          },
+          "rpo_hours": {
+            "description": "0 = none",
+            "type": "integer"
+          },
+          "window": {
+            "description": "Backup window: runs start only between window_from and window_to",
+            "type": "boolean"
+          },
+          "window_from": {
+            "type": "integer"
+          },
+          "window_to": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "JobUpdate": {
+        "description": "What can change after a job was created; missing fields stay. Unknown fields (also kind, agent, target, disk) are an error.",
+        "properties": {
+          "excludes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "options": {
+            "$ref": "#/components/schemas/JobOptions"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retention": {
+            "$ref": "#/components/schemas/Retention"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/Schedule"
           }
         },
         "type": "object"
@@ -462,6 +758,24 @@
         },
         "type": "object"
       },
+      "Retention": {
+        "description": "Snapshots to keep; a missing field is 0",
+        "properties": {
+          "keep_daily": {
+            "type": "integer"
+          },
+          "keep_last": {
+            "type": "integer"
+          },
+          "keep_monthly": {
+            "type": "integer"
+          },
+          "keep_weekly": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "Run": {
         "properties": {
           "agent": {
@@ -558,6 +872,69 @@
           "cancelled"
         ],
         "type": "string"
+      },
+      "Schedule": {
+        "description": "When a job runs. Fields not used by the kind are ignored.",
+        "properties": {
+          "after_any": {
+            "description": "chain: also when that job failed",
+            "type": "boolean"
+          },
+          "after_job": {
+            "description": "chain: the job this one follows",
+            "format": "int64",
+            "type": "integer"
+          },
+          "day_of_month": {
+            "maximum": 28,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "days": {
+            "description": "daily and interval: weekdays, 0 = Sunday; empty = every day",
+            "items": {
+              "maximum": 6,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "every_minutes": {
+            "description": "interval: a divisor of 60 below an hour (5, 10, 15, 20, 30), or whole hours that divide 24 (60, 120, 180, 240, 360, 480, 720, 1440)",
+            "type": "integer"
+          },
+          "from_hour": {
+            "description": "interval: from this hour (inclusive)",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "after: copy jobs, after each backup of the source job",
+            "enum": [
+              "manual",
+              "daily",
+              "interval",
+              "monthly",
+              "chain",
+              "after"
+            ],
+            "type": "string"
+          },
+          "times": {
+            "items": {
+              "description": "HH:MM",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "to_hour": {
+            "description": "interval: to this hour (exclusive)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
       },
       "Status": {
         "properties": {
@@ -994,9 +1371,88 @@
         "tags": [
           "jobs"
         ]
+      },
+      "post": {
+        "description": "Role: backup operator (commands: administrator). Files, disk image (Windows: whole disk, all disks or some partitions), Linux system or copy jobs, checked like in the console.",
+        "operationId": "createJob",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "summary": "Create a job",
+        "tags": [
+          "jobs"
+        ]
       }
     },
     "/api/v1/jobs/{id}": {
+      "delete": {
+        "description": "Role: backup operator. Existing backups remain on the storage. With four-eyes approval on, jobs are deleted in the console (409).",
+        "operationId": "deleteJob",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "deleted": {
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "format": "int64",
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "summary": "Delete a job",
+        "tags": [
+          "jobs"
+        ]
+      },
       "get": {
         "description": "Role: viewer.",
         "operationId": "getJob",
@@ -1024,6 +1480,53 @@
           }
         },
         "summary": "One job",
+        "tags": [
+          "jobs"
+        ]
+      },
+      "patch": {
+        "description": "Role: backup operator (commands: administrator). With four-eyes approval on, a shorter retention is changed in the console (409). Jobs that are part of a job for several agents are changed in the console (409).",
+        "operationId": "updateJob",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            },
+            "description": "Changed"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "summary": "Change a job",
         "tags": [
           "jobs"
         ]
@@ -1419,6 +1922,118 @@
         ]
       }
     },
+    "/api/v1/runs/{id}/files": {
+      "get": {
+        "description": "Role: restore operator. {id} is a file or Linux system backup on network storage; the console reads it from the storage.",
+        "operationId": "listFiles",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          },
+          {
+            "description": "Folder inside the backup (a path from a previous listing); empty = the top",
+            "in": "query",
+            "name": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileList"
+                }
+              }
+            },
+            "description": "Folder"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "summary": "List files of a backup",
+        "tags": [
+          "restore"
+        ]
+      }
+    },
+    "/api/v1/runs/{id}/files/download": {
+      "post": {
+        "description": "Role: restore operator. One file comes as is, several or folders as a ZIP archive. Errors before the download starts are JSON.",
+        "operationId": "downloadFiles",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "paths": {
+                    "items": {
+                      "description": "A path from GET /api/v1/runs/{id}/files",
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "paths"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The file or a ZIP archive"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "summary": "Download files of a backup",
+        "tags": [
+          "restore"
+        ]
+      }
+    },
     "/api/v1/runs/{id}/log": {
       "get": {
         "description": "Role: operator. Only for runs started with POST /api/v1/agents/{id}/log; the result of other runs is in GET /api/v1/runs/{id}.",
@@ -1685,7 +2300,7 @@
       "name": "agents"
     },
     {
-      "description": "Backup jobs: start backups and restore tests, enable and disable",
+      "description": "Backup jobs: create, change, delete, start backups and restore tests, enable and disable",
       "name": "jobs"
     },
     {
@@ -1693,7 +2308,7 @@
       "name": "runs"
     },
     {
-      "description": "Restore files from backups",
+      "description": "Browse, download and restore files from backups",
       "name": "restore"
     },
     {

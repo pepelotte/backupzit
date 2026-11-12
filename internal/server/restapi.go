@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/max-zit/backupzit/internal/repo"
 )
 
 // REST API for scripts, RMM and monitoring tools:
@@ -133,29 +134,39 @@ func apiErr(code int, format string, a ...any) error {
 	return apiError{code, fmt.Sprintf(format, a...)}
 }
 
+// apiAuth authenticates a token and checks perm. On failure it has
+// written the JSON error and returns false; on success the request carries
+// the token's user.
+func (s *Server) apiAuth(perm Perm, w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+	w.Header().Set("Cache-Control", "no-store")
+	if wait := s.guard.Blocked(r, ""); wait > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many failed sign-ins from this address"})
+		return r, false
+	}
+	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	u, who, err := s.store.tokenUser(r.Context(), strings.TrimSpace(token))
+	if err != nil {
+		s.guard.Fail(r, "", "API token sign-ins")
+		time.Sleep(300 * time.Millisecond)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing, invalid or expired API token"})
+		return r, false
+	}
+	if !u.Can(string(perm)) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "the token's role does not allow this"})
+		return r, false
+	}
+	u.Username = who
+	return r.WithContext(context.WithValue(r.Context(), userCtxKey, &u)), true
+}
+
 // api authenticates a token and checks perm; responses are JSON.
 func (s *Server) api(perm Perm, h apiHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		if wait := s.guard.Blocked(r, ""); wait > 0 {
-			w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many failed sign-ins from this address"})
+		r, ok := s.apiAuth(perm, w, r)
+		if !ok {
 			return
 		}
-		token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		u, who, err := s.store.tokenUser(r.Context(), strings.TrimSpace(token))
-		if err != nil {
-			s.guard.Fail(r, "", "API token sign-ins")
-			time.Sleep(300 * time.Millisecond)
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing, invalid or expired API token"})
-			return
-		}
-		if !u.Can(string(perm)) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "the token's role does not allow this"})
-			return
-		}
-		u.Username = who
-		r = r.WithContext(context.WithValue(r.Context(), userCtxKey, &u))
 		v, err := h(w, r)
 		if err != nil {
 			var ae apiError
@@ -218,6 +229,15 @@ type apiJob struct {
 	RPOHours       int        `json:"rpo_hours,omitempty"`
 	RPOMet         *bool      `json:"rpo_met,omitempty"`
 	LastGoodBackup *time.Time `json:"last_good_backup,omitempty"`
+	// The settings of the job, in the shapes POST /api/v1/jobs and
+	// PATCH /api/v1/jobs/{id} take.
+	Excludes        []string              `json:"excludes,omitempty"`
+	ImageDisk       *int                  `json:"image_disk,omitempty"`
+	ImagePartitions []int                 `json:"image_partitions,omitempty"`
+	ScheduleSpec    *Schedule             `json:"schedule_spec,omitempty"`
+	Retention       *repo.RetentionPolicy `json:"retention,omitempty"`
+	Options         *apiJobOptionsOut     `json:"options,omitempty"`
+	GroupID         *int64                `json:"group_id,omitempty"`
 }
 
 type apiRun struct {
@@ -251,7 +271,15 @@ func toAPIAgent(a Agent) apiAgent {
 func toAPIJob(j Job) apiJob {
 	x := apiJob{ID: j.ID, Name: j.Name, Kind: j.Kind, AgentID: j.AgentID, Agent: j.Hostname, TargetID: j.TargetID, Target: j.TargetName,
 		Enabled: j.Enabled, Schedule: DescribeSchedule(j.Schedule), LastStatus: deref(j.LastStatus), LastFinished: j.LastFinished,
-		Paths: j.Paths, SourceJobID: j.SourceJobID}
+		Paths: j.Paths, SourceJobID: j.SourceJobID,
+		Excludes: j.Excludes, ImageDisk: j.ImageDisk, ImagePartitions: j.ImagePartitions, Options: toAPIJobOptions(j.Options), GroupID: j.GroupID}
+	if sc, err := ParseSchedule(j.Schedule); err == nil && sc.Kind != "cron" {
+		x.ScheduleSpec = &sc
+	}
+	if !j.Retention.Empty() {
+		ret := j.Retention
+		x.Retention = &ret
+	}
 	if j.Enabled {
 		if n := NextRun(j.Schedule, time.Now()); !n.IsZero() {
 			x.NextRun = &n
@@ -415,6 +443,8 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	}))
 	s.registerAPIMore(mux)
 	s.registerAPIManage(mux)
+	s.registerAPIJobs(mux)
+	s.registerAPIFiles(mux)
 }
 
 // ---- token management pages (My account)

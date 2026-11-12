@@ -13,7 +13,10 @@
   <tr><th>方法和路径</th><th>角色</th><th>返回</th></tr>
   <tr><td><code>GET /api/v1/status</code></td><td>查看者</td><td>总体状态：在线代理、24 小时内的失败和警告、正在进行的运行、未检查的可疑备份，<code>"ok": true|false</code></td></tr>
   <tr><td><code>GET /api/v1/agents</code></td><td>查看者</td><td>代理及其操作系统、版本、在线状态和最后联系时间</td></tr>
-  <tr><td><code>GET /api/v1/jobs</code>, <code>GET /api/v1/jobs/{id}</code></td><td>查看者</td><td>作业及其计划、下次运行和上次结果</td></tr>
+  <tr><td><code>GET /api/v1/jobs</code>, <code>GET /api/v1/jobs/{id}</code></td><td>查看者</td><td>作业及其计划、下次运行和上次结果；并含其设置：<code>schedule_spec</code>, <code>retention</code>, <code>options</code>, <code>image_disk</code>, <code>image_partitions</code></td></tr>
+  <tr><td><code>POST /api/v1/jobs</code></td><td>备份操作员</td><td>创建作业：文件、磁盘映像（一块磁盘、用 <code>-1</code> 表示全部磁盘，或部分分区）、Linux 系统或复制，例如 <code>{"name": "PC-07", "kind": "image", "agent_id": 12, "target_id": 3, "image_disk": 0, "image_partitions": [3], "schedule": {"kind": "daily", "days": [1, 2, 3, 4, 5], "times": ["22:00"]}, "retention": {"keep_daily": 14}}</code>；与作业表单相同地检查。备份前后的命令需要管理员角色</td></tr>
+  <tr><td><code>PATCH /api/v1/jobs/{id}</code></td><td>备份操作员</td><td>更改名称、路径、排除项、计划、保留或选项；未给出的字段保持不变。启用四眼审批时，缩短保留须在控制台中进行（409）</td></tr>
+  <tr><td><code>DELETE /api/v1/jobs/{id}</code></td><td>备份操作员</td><td>删除作业；其备份保留在存储上。启用四眼审批时只能在控制台中删除（409）</td></tr>
   <tr><td><code>POST /api/v1/jobs/{id}/run</code></td><td>还原操作员</td><td>立即启动作业：<code>{"run_id": 123}</code>（202），如已有运行在进行则返回 409</td></tr>
   <tr><td><code>POST /api/v1/jobs/{id}/test</code></td><td>还原操作员</td><td>对作业的最新备份启动还原测试</td></tr>
   <tr><td><code>GET /api/v1/runs?job=&amp;agent=&amp;status=&amp;limit=</code></td><td>查看者</td><td>最近的运行，最新的在前（默认 100，最多 1000）</td></tr>
@@ -31,6 +34,8 @@
   <tr><td><code>GET /api/v1/storage</code></td><td>查看者</td><td>每个存储目标的已用空间，已知时还有容量和可用空间、每日增长和预计用满的天数</td></tr>
   <tr><td><code>GET /api/v1/metrics</code></td><td>查看者</td><td>Prometheus 文本格式的指标（见下文）</td></tr>
   <tr><td><code>POST /api/v1/runs/{id}/restore</code></td><td>还原操作员</td><td>由代理恢复某次备份中的文件：请求体 <code>{"target": "D:/Restore"}</code> 或 <code>{"original": true}</code>，可选 <code>"paths"</code>、<code>"agent_id"</code> 和 <code>"verify": true</code>；返回 <code>{"run_id": 125}</code></td></tr>
+  <tr><td><code>GET /api/v1/runs/{id}/files?path=</code></td><td>还原操作员</td><td>列出网络存储上文件备份或 Linux 系统备份的文件夹（<code>path=</code> 取自上一次列表）：<code>{"entries": [{"name": "…", "path": "…", "dir": false, "size": 16, "modified": "…"}]}</code></td></tr>
+  <tr><td><code>POST /api/v1/runs/{id}/files/download</code></td><td>还原操作员</td><td>下载备份中的文件：请求体 <code>{"paths": ["…"]}</code>；单个文件按原样，多个文件或文件夹为 ZIP 压缩包</td></tr>
   <tr><td><code>GET /api/v1/openapi.json</code></td><td>无需令牌</td><td>本 API 的 OpenAPI 3 规范，供工具和客户端生成器使用（也在仓库中：<code>internal/server/openapi.json</code>）</td></tr>
 </table>
 <p>时段：<code>today</code>、<code>yesterday</code>、<code>last7</code>、<code>last30</code>、<code>last90</code>、<code>thisweek</code>、<code>lastweek</code>、<code>thismonth</code>、<code>lastmonth</code>，或 <code>custom</code> 加 <code>from=2026-09-01&amp;to=2026-09-30</code>。</p>

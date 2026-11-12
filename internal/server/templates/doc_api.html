@@ -13,7 +13,10 @@
   <tr><th>Method and path</th><th>Role</th><th>Returns</th></tr>
   <tr><td><code>GET /api/v1/status</code></td><td>Viewer</td><td>Overall health: agents online, failures and warnings in 24 h, active runs, unreviewed suspicious backups, <code>"ok": true|false</code></td></tr>
   <tr><td><code>GET /api/v1/agents</code></td><td>Viewer</td><td>Agents with OS, version, online state and last contact</td></tr>
-  <tr><td><code>GET /api/v1/jobs</code>, <code>GET /api/v1/jobs/{id}</code></td><td>Viewer</td><td>Jobs with schedule, next run and last result</td></tr>
+  <tr><td><code>GET /api/v1/jobs</code>, <code>GET /api/v1/jobs/{id}</code></td><td>Viewer</td><td>Jobs with schedule, next run and last result; also their settings: <code>schedule_spec</code>, <code>retention</code>, <code>options</code>, <code>image_disk</code>, <code>image_partitions</code></td></tr>
+  <tr><td><code>POST /api/v1/jobs</code></td><td>Backup operator</td><td>Creates a job: files, disk image (one disk, all disks with <code>-1</code>, or some partitions), Linux system or copy, e.g. <code>{"name": "PC-07", "kind": "image", "agent_id": 12, "target_id": 3, "image_disk": 0, "image_partitions": [3], "schedule": {"kind": "daily", "days": [1, 2, 3, 4, 5], "times": ["22:00"]}, "retention": {"keep_daily": 14}}</code>; checked like the job form. Commands before and after a backup need the Administrator role</td></tr>
+  <tr><td><code>PATCH /api/v1/jobs/{id}</code></td><td>Backup operator</td><td>Changes name, paths, excludes, schedule, retention or options; fields not given stay. With four-eyes approval a shorter retention is changed in the console (409)</td></tr>
+  <tr><td><code>DELETE /api/v1/jobs/{id}</code></td><td>Backup operator</td><td>Deletes the job; its backups remain on the storage. With four-eyes approval only in the console (409)</td></tr>
   <tr><td><code>POST /api/v1/jobs/{id}/run</code></td><td>Restore operator</td><td>Starts the job now: <code>{"run_id": 123}</code> (202), or 409 if a run is already active</td></tr>
   <tr><td><code>POST /api/v1/jobs/{id}/test</code></td><td>Restore operator</td><td>Starts a restore test of the job's newest backup</td></tr>
   <tr><td><code>GET /api/v1/runs?job=&amp;agent=&amp;status=&amp;limit=</code></td><td>Viewer</td><td>Recent runs, newest first (default 100, max 1000)</td></tr>
@@ -31,6 +34,8 @@
   <tr><td><code>GET /api/v1/storage</code></td><td>Viewer</td><td>Space used per storage target, the capacity and free space when known, the growth per day and the days until full</td></tr>
   <tr><td><code>GET /api/v1/metrics</code></td><td>Viewer</td><td>Metrics in the Prometheus text format (see below)</td></tr>
   <tr><td><code>POST /api/v1/runs/{id}/restore</code></td><td>Restore operator</td><td>Restores files of a backup run with an agent: body <code>{"target": "D:/Restore"}</code> or <code>{"original": true}</code>, optionally <code>"paths"</code>, <code>"agent_id"</code> and <code>"verify": true</code>; returns <code>{"run_id": 125}</code></td></tr>
+  <tr><td><code>GET /api/v1/runs/{id}/files?path=</code></td><td>Restore operator</td><td>Lists a folder of a file or Linux system backup on network storage (<code>path=</code> from the previous listing): <code>{"entries": [{"name": "…", "path": "…", "dir": false, "size": 16, "modified": "…"}]}</code></td></tr>
+  <tr><td><code>POST /api/v1/runs/{id}/files/download</code></td><td>Restore operator</td><td>Downloads files of the backup: body <code>{"paths": ["…"]}</code>; one file as is, several or folders as a ZIP archive</td></tr>
   <tr><td><code>GET /api/v1/openapi.json</code></td><td>no token</td><td>The OpenAPI 3 specification of this API, for tools and client generators (also in the repository: <code>internal/server/openapi.json</code>)</td></tr>
 </table>
 <p>Periods: <code>today</code>, <code>yesterday</code>, <code>last7</code>, <code>last30</code>, <code>last90</code>, <code>thisweek</code>, <code>lastweek</code>, <code>thismonth</code>, <code>lastmonth</code>, or <code>custom</code> with <code>from=2026-09-01&amp;to=2026-09-30</code>.</p>

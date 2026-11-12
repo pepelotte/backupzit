@@ -31,7 +31,7 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 		}
 	}
 	files, _ := filepath.Glob("*.go")
-	re := regexp.MustCompile(`HandleFunc\("((?:GET|POST|PUT|DELETE) /api/v1/[^"]*)"`)
+	re := regexp.MustCompile(`HandleFunc\("((?:GET|POST|PUT|PATCH|DELETE) /api/v1/[^"]*)"`)
 	loop := regexp.MustCompile(`"(POST /api/v1/jobs/\{id\}/)"\+x\.path`)
 	seen := map[string]bool{}
 	var inCode []string
