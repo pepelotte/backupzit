@@ -47,7 +47,9 @@ func (s *Server) registerAPIMore(mux *http.ServeMux) {
 		if err != nil {
 			return nil, err
 		}
-		return toAPIAgent(a), nil
+		x := toAPIAgent(a)
+		x.Disks = toAPIDisks(a)
+		return x, nil
 	}))
 	mux.HandleFunc("POST /api/v1/agents/{id}/log", s.api(PermAgents, func(w http.ResponseWriter, r *http.Request) (any, error) {
 		id, err := pathInt(r, "id")

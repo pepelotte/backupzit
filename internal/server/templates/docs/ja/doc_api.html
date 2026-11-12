@@ -20,7 +20,10 @@
   <tr><td><code>GET /api/v1/runs/{id}</code></td><td>閲覧者</td><td>メッセージ、エラー、統計を含む 1 件の実行</td></tr>
   <tr><td><code>GET /api/v1/report?period=&amp;from=&amp;to=&amp;agent=&amp;job=</code></td><td>閲覧者</td><td>期間の<a href="/docs/monitoring">レポート</a>: 合計、成功率、ジョブごとの詳細</td></tr>
   <tr><td><code>GET /api/v1/targets</code></td><td>閲覧者</td><td>ストレージ先（資格情報を除く）</td></tr>
-  <tr><td><code>GET /api/v1/agents/{id}</code></td><td>閲覧者</td><td>1 つのエージェント</td></tr>
+  <tr><td><code>POST /api/v1/targets</code></td><td>管理者</td><td><a href="/targets">ストレージ</a> フォームと同じ項目でストレージ先を作成します。例: <code>{"name": "Customer A", "kind": "s3", "s3_endpoint": "…", "s3_bucket": "…", "s3_access_key": "…", "s3_secret_key": "…", "s3_lock_days": 30}</code>。<code>"encrypted": false</code> を指定しない限り暗号化されます。接続をテストし、リカバリーキーを一度だけ返します — 安全に保管してください</td></tr>
+  <tr><td><code>POST /api/v1/targets/{id}/test</code></td><td>管理者</td><td>ストレージへの接続をテストします: <code>{"ok": true, "message": "…"}</code></td></tr>
+  <tr><td><code>POST /api/v1/agents/enroll-code</code></td><td>バックアップ オペレーター</td><td>エージェントを 1 台登録するためのコード（7 日間有効）: <code>{"code": "BZ1-…", "expires": "…"}</code></td></tr>
+  <tr><td><code>GET /api/v1/agents/{id}</code></td><td>閲覧者</td><td>1 つのエージェントと、報告されたディスクとパーティション（番号でイメージ バックアップの対象を選択）</td></tr>
   <tr><td><code>POST /api/v1/agents/{id}/log</code></td><td>バックアップ オペレーター</td><td>エージェントにログを要求します: <code>{"run_id": 124}</code>。エージェントが送信したら次のエンドポイントで読み取ります（エージェント 0.38.0 以降）</td></tr>
   <tr><td><code>GET /api/v1/runs/{id}/log</code></td><td>バックアップ オペレーター</td><td>エージェントが送信したログ: <code>{"log": "..."}</code>。届くまでは 404</td></tr>
   <tr><td><code>POST /api/v1/runs/{id}/cancel</code></td><td>復元オペレーター</td><td>待機中の実行をキャンセルするか、実行中のものを停止します: <code>{"state": "cancelled"}</code> または <code>"stopping"</code>。終了済みなら 409</td></tr>

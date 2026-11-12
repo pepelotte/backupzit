@@ -20,7 +20,10 @@
   <tr><td><code>GET /api/v1/runs/{id}</code></td><td>Observador</td><td>Una ejecución con mensaje, errores y estadísticas</td></tr>
   <tr><td><code>GET /api/v1/report?period=&amp;from=&amp;to=&amp;agent=&amp;job=</code></td><td>Observador</td><td>El <a href="/docs/monitoring">informe</a> de un periodo: totales, tasa de éxito y detalles por trabajo</td></tr>
   <tr><td><code>GET /api/v1/targets</code></td><td>Observador</td><td>Destinos de almacenamiento (sin credenciales)</td></tr>
-  <tr><td><code>GET /api/v1/agents/{id}</code></td><td>Observador</td><td>Un agente</td></tr>
+  <tr><td><code>POST /api/v1/targets</code></td><td>Administrador</td><td>Crea un almacenamiento con los campos del formulario de <a href="/targets">Almacenamiento</a>, p. ej. <code>{"name": "Customer A", "kind": "s3", "s3_endpoint": "…", "s3_bucket": "…", "s3_access_key": "…", "s3_secret_key": "…", "s3_lock_days": 30}</code>; cifrado salvo con <code>"encrypted": false</code>. Prueba la conexión y devuelve la clave de recuperación una sola vez: guárdela en un lugar seguro</td></tr>
+  <tr><td><code>POST /api/v1/targets/{id}/test</code></td><td>Administrador</td><td>Prueba la conexión con el almacenamiento: <code>{"ok": true, "message": "…"}</code></td></tr>
+  <tr><td><code>POST /api/v1/agents/enroll-code</code></td><td>Operador de copias</td><td>Un código para registrar un agente, válido 7 días: <code>{"code": "BZ1-…", "expires": "…"}</code></td></tr>
+  <tr><td><code>GET /api/v1/agents/{id}</code></td><td>Observador</td><td>Un agente, con los discos y particiones que ha informado (sus números los seleccionan en las copias de imagen)</td></tr>
   <tr><td><code>POST /api/v1/agents/{id}/log</code></td><td>Operador de copias</td><td>Pide su registro al agente: <code>{"run_id": 124}</code>; se lee con el siguiente punto cuando el agente lo haya enviado (agentes 0.38.0 o posteriores)</td></tr>
   <tr><td><code>GET /api/v1/runs/{id}/log</code></td><td>Operador de copias</td><td>El registro enviado por el agente: <code>{"log": "..."}</code>, o 404 hasta que llegue</td></tr>
   <tr><td><code>POST /api/v1/runs/{id}/cancel</code></td><td>Operador de restauración</td><td>Cancela una ejecución en cola o detiene una en curso: <code>{"state": "cancelled"}</code> o <code>"stopping"</code>; 409 si ya terminó</td></tr>

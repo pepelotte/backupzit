@@ -194,6 +194,8 @@ type apiAgent struct {
 	SeenFrom string     `json:"seen_from"`
 	Enrolled time.Time  `json:"enrolled"`
 	MaxRuns  int        `json:"max_runs"`
+	// Disks: only in GET /api/v1/agents/{id}, for image jobs.
+	Disks []apiDisk `json:"disks,omitempty"`
 }
 
 type apiJob struct {
@@ -242,7 +244,8 @@ type apiRun struct {
 }
 
 func toAPIAgent(a Agent) apiAgent {
-	return apiAgent{a.ID, a.Hostname, a.OS + "/" + a.Arch, a.Version, a.Online(), a.LastSeen, a.Recovery, a.LocalIPs, a.RemoteAddr, a.EnrolledAt, max(a.MaxRuns, 1)}
+	return apiAgent{ID: a.ID, Hostname: a.Hostname, OS: a.OS + "/" + a.Arch, Version: a.Version, Online: a.Online(), LastSeen: a.LastSeen,
+		Recovery: a.Recovery, LocalIPs: a.LocalIPs, SeenFrom: a.RemoteAddr, Enrolled: a.EnrolledAt, MaxRuns: max(a.MaxRuns, 1)}
 }
 
 func toAPIJob(j Job) apiJob {
@@ -406,12 +409,12 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 		list, err := s.store.ListTargets(r.Context())
 		out := []map[string]any{}
 		for _, t := range list { // no credentials
-			out = append(out, map[string]any{"id": t.ID, "name": t.Name, "kind": t.Kind, "location": t.URL,
-				"encrypted": t.Encrypted, "immutable_days": t.S3LockDays})
+			out = append(out, apiTargetJSON(t))
 		}
 		return out, err
 	}))
 	s.registerAPIMore(mux)
+	s.registerAPIManage(mux)
 }
 
 // ---- token management pages (My account)

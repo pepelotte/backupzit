@@ -20,7 +20,10 @@
   <tr><td><code>GET /api/v1/runs/{id}</code></td><td>Lecteur</td><td>Une exécution avec message, erreurs et statistiques</td></tr>
   <tr><td><code>GET /api/v1/report?period=&amp;from=&amp;to=&amp;agent=&amp;job=</code></td><td>Lecteur</td><td>Le <a href="/docs/monitoring">rapport</a> d'une période : totaux, taux de réussite et détails par tâche</td></tr>
   <tr><td><code>GET /api/v1/targets</code></td><td>Lecteur</td><td>Cibles de stockage (sans identifiants)</td></tr>
-  <tr><td><code>GET /api/v1/agents/{id}</code></td><td>Lecteur</td><td>Un agent</td></tr>
+  <tr><td><code>POST /api/v1/targets</code></td><td>Administrateur</td><td>Crée un stockage avec les champs du formulaire <a href="/targets">Stockage</a>, p. ex. <code>{"name": "Customer A", "kind": "s3", "s3_endpoint": "…", "s3_bucket": "…", "s3_access_key": "…", "s3_secret_key": "…", "s3_lock_days": 30}</code> ; chiffré sauf avec <code>"encrypted": false</code>. Teste la connexion et renvoie la clé de récupération une seule fois — conservez-la en lieu sûr</td></tr>
+  <tr><td><code>POST /api/v1/targets/{id}/test</code></td><td>Administrateur</td><td>Teste la connexion au stockage : <code>{"ok": true, "message": "…"}</code></td></tr>
+  <tr><td><code>POST /api/v1/agents/enroll-code</code></td><td>Opérateur de sauvegarde</td><td>Un code pour enrôler un agent, valable 7 jours : <code>{"code": "BZ1-…", "expires": "…"}</code></td></tr>
+  <tr><td><code>GET /api/v1/agents/{id}</code></td><td>Lecteur</td><td>Un agent, avec les disques et partitions qu’il a signalés (leurs numéros les sélectionnent dans les sauvegardes d’image)</td></tr>
   <tr><td><code>POST /api/v1/agents/{id}/log</code></td><td>Opérateur de sauvegarde</td><td>Demande son journal à l'agent : <code>{"run_id": 124}</code> ; à lire avec le point suivant une fois envoyé (agents 0.38.0 ou plus récents)</td></tr>
   <tr><td><code>GET /api/v1/runs/{id}/log</code></td><td>Opérateur de sauvegarde</td><td>Le journal envoyé par l'agent : <code>{"log": "..."}</code>, ou 404 tant qu'il n'est pas arrivé</td></tr>
   <tr><td><code>POST /api/v1/runs/{id}/cancel</code></td><td>Opérateur de restauration</td><td>Annule une exécution en attente ou arrête une exécution en cours : <code>{"state": "cancelled"}</code> ou <code>"stopping"</code> ; 409 si elle est terminée</td></tr>

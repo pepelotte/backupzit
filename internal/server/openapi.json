@@ -101,6 +101,13 @@
     "schemas": {
       "Agent": {
         "properties": {
+          "disks": {
+            "description": "Only in GET /api/v1/agents/{id}: the disks the agent reported (Windows), for image jobs",
+            "items": {
+              "$ref": "#/components/schemas/Disk"
+            },
+            "type": "array"
+          },
           "enrolled": {
             "format": "date-time",
             "type": "string"
@@ -141,6 +148,61 @@
             "type": "string"
           },
           "version": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Disk": {
+        "properties": {
+          "bus": {
+            "description": "usb, sd, virtual-file, removable, or empty for internal disks",
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "number": {
+            "description": "Number to select in an image job",
+            "type": "integer"
+          },
+          "partitions": {
+            "items": {
+              "$ref": "#/components/schemas/Partition"
+            },
+            "type": "array"
+          },
+          "size": {
+            "description": "Bytes",
+            "format": "int64",
+            "type": "integer"
+          },
+          "style": {
+            "description": "gpt or mbr",
+            "type": "string"
+          },
+          "system": {
+            "description": "Holds the running Windows",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "EnrollCode": {
+        "properties": {
+          "code": {
+            "description": "BZ1-… for the agent installer (ENROLLCODE=…) or backupzit-agent enroll -code",
+            "type": "string"
+          },
+          "expires": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "fingerprint": {
+            "description": "SHA256:… of the console certificate",
+            "type": "string"
+          },
+          "server_url": {
             "type": "string"
           }
         },
@@ -222,6 +284,39 @@
             "type": "string"
           },
           "target_id": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "Partition": {
+        "properties": {
+          "file_system": {
+            "type": "string"
+          },
+          "kind": {
+            "description": "e.g. EFI System, Basic data, Recovery",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "mount_points": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "number": {
+            "description": "Number to select in an image job",
+            "type": "integer"
+          },
+          "size": {
+            "description": "Bytes",
             "format": "int64",
             "type": "integer"
           }
@@ -567,6 +662,176 @@
           }
         },
         "type": "object"
+      },
+      "TargetCreate": {
+        "description": "The fields of the form on the Storage page. Fill those of the chosen kind; unknown fields are an error.",
+        "properties": {
+          "azure_account": {
+            "type": "string"
+          },
+          "azure_auth": {
+            "enum": [
+              "key",
+              "sas"
+            ],
+            "type": "string"
+          },
+          "azure_container": {
+            "type": "string"
+          },
+          "azure_endpoint": {
+            "type": "string"
+          },
+          "azure_path": {
+            "type": "string"
+          },
+          "azure_secret": {
+            "description": "Account key or SAS token",
+            "type": "string"
+          },
+          "encrypted": {
+            "default": true,
+            "description": "Encrypt backups (AES-256-GCM) with a recovery key",
+            "type": "boolean"
+          },
+          "hardened_fingerprint": {
+            "description": "SHA256:…",
+            "type": "string"
+          },
+          "hardened_host": {
+            "description": "host:8500",
+            "type": "string"
+          },
+          "hardened_key": {
+            "type": "string"
+          },
+          "hardened_path": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "s3",
+              "sftp",
+              "smb",
+              "azure",
+              "hardened",
+              "local",
+              "usb"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "recovery_key": {
+            "description": "Own recovery key (32 letters and digits in groups of four); generated when empty",
+            "type": "string"
+          },
+          "s3_access_key": {
+            "type": "string"
+          },
+          "s3_bucket": {
+            "type": "string"
+          },
+          "s3_endpoint": {
+            "description": "e.g. s3.eu-central-003.backblazeb2.com",
+            "type": "string"
+          },
+          "s3_http": {
+            "description": "Plain HTTP (tests only)",
+            "type": "boolean"
+          },
+          "s3_lock_days": {
+            "description": "Immutable for this many days with S3 Object Lock (the bucket needs Object Lock); 0 = off",
+            "maximum": 3650,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "s3_prefix": {
+            "type": "string"
+          },
+          "s3_region": {
+            "type": "string"
+          },
+          "s3_secret_key": {
+            "type": "string"
+          },
+          "sftp_host_key": {
+            "description": "SHA256:… fingerprint of the server",
+            "type": "string"
+          },
+          "sftp_key": {
+            "description": "Private key (PEM)",
+            "type": "string"
+          },
+          "sftp_password": {
+            "type": "string"
+          },
+          "smb_domain": {
+            "type": "string"
+          },
+          "smb_host": {
+            "type": "string"
+          },
+          "smb_password": {
+            "type": "string"
+          },
+          "smb_path": {
+            "type": "string"
+          },
+          "smb_share": {
+            "type": "string"
+          },
+          "smb_user": {
+            "type": "string"
+          },
+          "url": {
+            "description": "local: folder on the agent; sftp: sftp://user@host:22/path",
+            "type": "string"
+          },
+          "usb_label": {
+            "type": "string"
+          },
+          "usb_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "TargetCreated": {
+        "properties": {
+          "recovery_key": {
+            "description": "Only for encrypted targets, only in this response: keep it safe, without it the backups cannot be read if the console is lost",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/Target"
+          },
+          "test": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TargetTest"
+              }
+            ],
+            "description": "Connection test (not for local and USB targets); a failed test leaves the target in place"
+          }
+        },
+        "type": "object"
+      },
+      "TargetTest": {
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -616,6 +881,31 @@
         ]
       }
     },
+    "/api/v1/agents/enroll-code": {
+      "post": {
+        "description": "Role: backup operator. A code to enroll one agent, valid for seven days.",
+        "operationId": "createEnrollCode",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollCode"
+                }
+              }
+            },
+            "description": "Code"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "summary": "Create an enrollment code",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
     "/api/v1/agents/{id}": {
       "get": {
         "description": "Role: viewer.",
@@ -643,7 +933,7 @@
             "$ref": "#/components/responses/NotFound"
           }
         },
-        "summary": "One agent",
+        "summary": "One agent with its disks",
         "tags": [
           "agents"
         ]
@@ -1295,6 +1585,75 @@
           }
         },
         "summary": "Storage targets (without credentials)",
+        "tags": [
+          "storage"
+        ]
+      },
+      "post": {
+        "description": "Role: administrator. Creates a target like the Storage page, tests the connection and returns the recovery key once.",
+        "operationId": "createTarget",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetCreated"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "summary": "Create a storage target",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
+    "/api/v1/targets/{id}/test": {
+      "post": {
+        "description": "Role: administrator. The connection test of the Storage page.",
+        "operationId": "testTarget",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetTest"
+                }
+              }
+            },
+            "description": "Result"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "summary": "Test a storage target",
         "tags": [
           "storage"
         ]

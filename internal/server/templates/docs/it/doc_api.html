@@ -20,7 +20,10 @@
   <tr><td><code>GET /api/v1/runs/{id}</code></td><td>Visualizzatore</td><td>Un'esecuzione con messaggio, errori e statistiche</td></tr>
   <tr><td><code>GET /api/v1/report?period=&amp;from=&amp;to=&amp;agent=&amp;job=</code></td><td>Visualizzatore</td><td>Il <a href="/docs/monitoring">report</a> di un periodo: totali, percentuale di successo e dettagli per job</td></tr>
   <tr><td><code>GET /api/v1/targets</code></td><td>Visualizzatore</td><td>Destinazioni di archiviazione (senza credenziali)</td></tr>
-  <tr><td><code>GET /api/v1/agents/{id}</code></td><td>Visualizzatore</td><td>Un agent</td></tr>
+  <tr><td><code>POST /api/v1/targets</code></td><td>Amministratore</td><td>Crea una destinazione di archiviazione con i campi del modulo <a href="/targets">Archiviazione</a>, ad es. <code>{"name": "Customer A", "kind": "s3", "s3_endpoint": "…", "s3_bucket": "…", "s3_access_key": "…", "s3_secret_key": "…", "s3_lock_days": 30}</code>; cifrata salvo con <code>"encrypted": false</code>. Verifica la connessione e restituisce la chiave di ripristino una sola volta: conservala al sicuro</td></tr>
+  <tr><td><code>POST /api/v1/targets/{id}/test</code></td><td>Amministratore</td><td>Verifica la connessione all’archiviazione: <code>{"ok": true, "message": "…"}</code></td></tr>
+  <tr><td><code>POST /api/v1/agents/enroll-code</code></td><td>Operatore di backup</td><td>Un codice per registrare un agente, valido 7 giorni: <code>{"code": "BZ1-…", "expires": "…"}</code></td></tr>
+  <tr><td><code>GET /api/v1/agents/{id}</code></td><td>Visualizzatore</td><td>Un agente, con i dischi e le partizioni che ha segnalato (i loro numeri li selezionano nei backup immagine)</td></tr>
   <tr><td><code>POST /api/v1/agents/{id}/log</code></td><td>Operatore di backup</td><td>Chiede all'agent il suo log: <code>{"run_id": 124}</code>; si legge con l'endpoint successivo quando l'agent l'ha inviato (agent 0.38.0 o successivi)</td></tr>
   <tr><td><code>GET /api/v1/runs/{id}/log</code></td><td>Operatore di backup</td><td>Il log inviato dall'agent: <code>{"log": "..."}</code>, oppure 404 finché non arriva</td></tr>
   <tr><td><code>POST /api/v1/runs/{id}/cancel</code></td><td>Operatore di ripristino</td><td>Annulla un'esecuzione in coda o ferma una in corso: <code>{"state": "cancelled"}</code> o <code>"stopping"</code>; 409 se è terminata</td></tr>
