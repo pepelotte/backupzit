@@ -1,0 +1,40 @@
+[Unit]
+Description=BackupZit connector for the itdocs management platform
+Documentation=https://github.com/pepelotte/backupzit/tree/itdocs/itdocs/connector
+After=network-online.target backupzit-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=backupzit-connector
+Group=backupzit-connector
+ExecStart=/usr/bin/backupzit-connector -config /etc/backupzit-connector/config.json
+Restart=always
+RestartSec=15
+
+# It only talks HTTPS outwards and to the console on localhost.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

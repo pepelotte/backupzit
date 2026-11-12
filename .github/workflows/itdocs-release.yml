@@ -71,9 +71,11 @@ jobs:
 
               sudo apt install ./$(cd dist && ls backupzit-server_*.deb)
 
+          The connector to the itdocs platform: sudo apt install ./$(cd dist && ls backupzit-connector_*.deb), then fill in /etc/backupzit-connector/config.json.
+
           Use the official, signed agent packages of BackupZit $BASE on the computers; this package carries them for download in the console.
           Do not install console updates from Settings -> Updates until the extensions are part of an official release.
           EOF
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "BackupZit $BASE (itdocs ${TAG##*-itdocs.})" --notes-file notes.md \
-            dist/backupzit-server* dist/SHA256SUMS
+            dist/backupzit-server* dist/backupzit-connector* dist/SHA256SUMS

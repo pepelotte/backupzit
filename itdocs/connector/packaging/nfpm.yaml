@@ -1,0 +1,27 @@
+name: backupzit-connector
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: admin
+priority: optional
+maintainer: itdocs <h.faiss@itdocs.de>
+description: |
+  Connects the itdocs management platform with the BackupZit console on
+  this server. Outbound only: fetches commands, reports results and state.
+homepage: https://github.com/pepelotte/backupzit
+license: AGPL-3.0-only
+depends:
+  - backupzit-server
+contents:
+  - src: ./bin/linux/backupzit-connector
+    dst: /usr/bin/backupzit-connector
+    file_info:
+      mode: 0755
+  - src: ./itdocs/connector/packaging/backupzit-connector.service
+    dst: /usr/lib/systemd/system/backupzit-connector.service
+  - src: ./itdocs/connector/packaging/config.example.json
+    dst: /usr/share/backupzit-connector/config.example.json
+  - src: ./LICENSE
+    dst: /usr/share/doc/backupzit-connector/copyright
+scripts:
+  postinstall: ./itdocs/connector/packaging/postinstall.sh

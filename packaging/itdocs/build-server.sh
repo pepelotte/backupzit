@@ -26,5 +26,11 @@ NFPM="go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0"
 for fmt in deb rpm; do
     $NFPM package --config packaging/linux/nfpm-server.yaml --packager "$fmt" --target dist/
 done
-(cd dist && sha256sum backupzit-server* > SHA256SUMS)
+# The connector between the itdocs platform and this console.
+(cd itdocs/connector && go vet ./... && go test -count=1 ./... && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o ../../bin/linux/backupzit-connector .)
+for fmt in deb rpm; do
+    $NFPM package --config itdocs/connector/packaging/nfpm.yaml --packager "$fmt" --target dist/
+done
+(cd dist && sha256sum backupzit-server* backupzit-connector* > SHA256SUMS)
 ls -l dist/
