@@ -1,0 +1,71 @@
+# Builds the console of this fork (REST API extensions) and publishes it as
+# a GitHub release of the fork. Start it by pushing a tag such as
+# v0.48.2-itdocs.1 (official version 0.48.2, our build 1), or by hand under
+# Actions -> itdocs release.
+name: itdocs release
+
+on:
+  push:
+    tags: ['v*-itdocs.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build, e.g. v0.48.2-itdocs.1 (created on the selected branch if missing)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write   # create the release in this fork
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Version from the tag
+        id: v
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*-itdocs.[0-9]*) ;;
+            *) echo "tag must look like v0.48.2-itdocs.1, not $TAG" >&2; exit 1 ;;
+          esac
+          base=${TAG#v}; base=${base%%-*}
+          suffix=${TAG#*-}
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "suffix=$suffix" >> "$GITHUB_OUTPUT"
+      - name: Test
+        run: go test -count=1 -timeout 50m ./internal/server/...
+      - name: Build packages
+        env:
+          BASE: ${{ steps.v.outputs.base }}
+          SUFFIX: ${{ steps.v.outputs.suffix }}
+        run: sh packaging/itdocs/build-server.sh "$BASE" "$SUFFIX"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+          BASE: ${{ steps.v.outputs.base }}
+        run: |
+          cat > notes.md <<EOF
+          BackupZit $BASE with the REST API extensions of this fork (storage targets, jobs, enrollment codes, file browse and download).
+
+          Install on the console server (replaces the official backupzit-server package; data and settings stay):
+
+              sudo apt install ./$(cd dist && ls backupzit-server_*.deb)
+
+          Use the official, signed agent packages of BackupZit $BASE on the computers; this package carries them for download in the console.
+          Do not install console updates from Settings -> Updates until the extensions are part of an official release.
+          EOF
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "BackupZit $BASE (itdocs ${TAG##*-itdocs.})" --notes-file notes.md \
+            dist/backupzit-server* dist/SHA256SUMS
