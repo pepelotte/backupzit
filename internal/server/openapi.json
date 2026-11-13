@@ -108,6 +108,10 @@
             },
             "type": "array"
           },
+          "enroll_label": {
+            "description": "Label of the enrollment code the agent enrolled with (e.g. a reference of a management tool)",
+            "type": "string"
+          },
           "enrolled": {
             "format": "date-time",
             "type": "string"
@@ -202,8 +206,35 @@
             "description": "SHA256:… of the console certificate",
             "type": "string"
           },
+          "label": {
+            "type": "string"
+          },
           "server_url": {
             "type": "string"
+          },
+          "single_use": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "EnrollCodeRequest": {
+        "description": "Optional; without a body the code is valid for 7 days and reusable.",
+        "properties": {
+          "label": {
+            "description": "Kept by the agent that enrolls with the code (GET /api/v1/agents: enroll_label)",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "single_use": {
+            "description": "The code enrolls one agent only",
+            "type": "boolean"
+          },
+          "ttl_minutes": {
+            "description": "Validity; default 7 days",
+            "maximum": 43200,
+            "minimum": 5,
+            "type": "integer"
           }
         },
         "type": "object"
@@ -1260,8 +1291,18 @@
     },
     "/api/v1/agents/enroll-code": {
       "post": {
-        "description": "Role: backup operator. A code to enroll one agent, valid for seven days.",
+        "description": "Role: backup operator. A code to enroll agents, by default valid for seven days and reusable; optionally shorter, single-use and with a label the agent keeps.",
         "operationId": "createEnrollCode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollCodeRequest"
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "202": {
             "content": {
@@ -1272,6 +1313,9 @@
               }
             },
             "description": "Code"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"

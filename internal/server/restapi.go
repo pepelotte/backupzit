@@ -207,6 +207,8 @@ type apiAgent struct {
 	MaxRuns  int        `json:"max_runs"`
 	// Disks: only in GET /api/v1/agents/{id}, for image jobs.
 	Disks []apiDisk `json:"disks,omitempty"`
+	// EnrollLabel is the label of the enrollment code the agent used.
+	EnrollLabel string `json:"enroll_label,omitempty"`
 }
 
 type apiJob struct {
@@ -265,7 +267,7 @@ type apiRun struct {
 
 func toAPIAgent(a Agent) apiAgent {
 	return apiAgent{ID: a.ID, Hostname: a.Hostname, OS: a.OS + "/" + a.Arch, Version: a.Version, Online: a.Online(), LastSeen: a.LastSeen,
-		Recovery: a.Recovery, LocalIPs: a.LocalIPs, SeenFrom: a.RemoteAddr, Enrolled: a.EnrolledAt, MaxRuns: max(a.MaxRuns, 1)}
+		Recovery: a.Recovery, LocalIPs: a.LocalIPs, SeenFrom: a.RemoteAddr, Enrolled: a.EnrolledAt, MaxRuns: max(a.MaxRuns, 1), EnrollLabel: a.EnrollLabel}
 }
 
 func toAPIJob(j Job) apiJob {
