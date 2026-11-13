@@ -54,6 +54,7 @@ var actions = map[string]handler{
 	"target.test":       actTargetTest,
 	"agent.enroll_code": actEnrollCode,
 	"agent.log":         actAgentLog,
+	"agent.installer":   actAgentInstaller,
 	"job.create":        actJobCreate,
 	"job.update":        actJobUpdate,
 	"job.delete":        actJobDelete,

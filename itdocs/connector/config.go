@@ -40,6 +40,9 @@ type Config struct {
 	RunDays       int `json:"run_days"`       // runs reported, default 90
 	// TempDir holds downloads on their way to the platform.
 	TempDir string `json:"temp_dir"`
+	// DistDir holds the agent packages the console ships
+	// (/usr/share/backupzit/dist); agent.installer takes them from there.
+	DistDir string `json:"dist_dir"`
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -80,6 +83,9 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if c.TempDir == "" {
 		c.TempDir = os.TempDir()
+	}
+	if c.DistDir == "" {
+		c.DistDir = "/usr/share/backupzit/dist"
 	}
 	return &c, c.validate()
 }

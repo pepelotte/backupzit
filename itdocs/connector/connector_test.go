@@ -44,6 +44,8 @@ type fakes struct {
 	jobPosts      []map[string]any
 	jobPatches    []map[string]any
 	lastAuthToken string
+	codeRequests  []map[string]any
+	uploadReqs    []map[string]any
 }
 
 func newFakes(t *testing.T) (*fakes, *connector) {
@@ -102,6 +104,7 @@ func (f *fakes) platform(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{})
 	case r.URL.Path == "/downloads/upload-url":
 		b := readBody(r)
+		f.uploadReqs = append(f.uploadReqs, b)
 		p := fmt.Sprintf("%s/%s", b["command_id"], b["filename"])
 		writeJSON(w, 200, map[string]any{"storage_path": p, "signed_url": "http://" + r.Host + "/upload/" + p})
 	default:
@@ -172,6 +175,9 @@ func (f *fakes) backupZit(w http.ResponseWriter, r *http.Request) {
 			f.testsUntilOK--
 		}
 		writeJSON(w, 202, map[string]any{"ok": f.testsUntilOK == 0, "message": "retest"})
+	case r.Method == "POST" && p == "/agents/enroll-code":
+		f.codeRequests = append(f.codeRequests, readBody(r))
+		writeJSON(w, 202, map[string]any{"code": "BZ1-test", "expires": "2026-11-14T10:00:00Z"})
 	case r.Method == "POST" && p == "/jobs":
 		b := readBody(r)
 		f.jobPosts = append(f.jobPosts, b)
@@ -470,5 +476,61 @@ func TestConfig(t *testing.T) {
 	os.WriteFile(p, []byte(`{"platform":{"url":"http://x","token":"t"},"backupzit":{"token":"b","fingerprint":"x"}}`), 0o600)
 	if _, err := loadConfig(p); err == nil {
 		t.Error("http platform accepted")
+	}
+}
+
+func TestAgentInstaller(t *testing.T) {
+	f, c := newFakes(t)
+	dist := t.TempDir()
+	c.cfg.DistDir = dist
+	for _, n := range []string{"backupzit-agent-0.48.2-x64.msi", "backupzit-agent_0.48.2_amd64.deb", "backupzit-agent-0.48.2-1.x86_64.rpm", "backupzit-repo_0.48.2_amd64.deb"} {
+		os.WriteFile(filepath.Join(dist, n), []byte("package "+n), 0o644)
+	}
+	f.mu.Lock()
+	f.queue = append(f.queue, Command{ID: "inst1", CustomerID: customer, DeviceID: "dev-7", Action: "agent.installer",
+		Params: json.RawMessage(`{"request_id":"r1","hostname":"PC-07","os":"Windows 11","platforms":["windows-x64","linux-x64"]}`)})
+	f.mu.Unlock()
+	process(t, c)
+	res := f.result("inst1")
+	if res["status"] != "done" {
+		t.Fatalf("installer: %v", res)
+	}
+	cr := f.codeRequests[0]
+	if cr["single_use"] != true || cr["ttl_minutes"] != float64(1440) || cr["label"] != "itdocs:"+customer+":dev-7" {
+		t.Errorf("code request: %v", cr)
+	}
+	pk := res["result"].(map[string]any)["packages"].([]any)
+	win, lin := pk[0].(map[string]any), pk[1].(map[string]any)
+	if win["platform"] != "windows-x64" || win["package_type"] != "msi" || win["version"] != "0.48.2" || win["size_bytes"] != float64(len("package backupzit-agent-0.48.2-x64.msi")) ||
+		len(fmt.Sprint(win["sha256"])) != 64 || fmt.Sprint(win["install_args"]) != "[/qn /norestart ENROLLCODE=BZ1-test]" {
+		t.Errorf("windows package: %v", win)
+	}
+	if lin["package_type"] != "deb" || !strings.Contains(fmt.Sprint(lin["post_install"]), "--code BZ1-test") {
+		t.Errorf("linux package: %v", lin)
+	}
+	if string(f.uploads["inst1/backupzit-agent-0.48.2-x64.msi"]) != "package backupzit-agent-0.48.2-x64.msi" || f.uploadReqs[0]["platform"] != "windows-x64" {
+		t.Errorf("uploads: %v %v", f.uploadReqs, len(f.uploads))
+	}
+	// RPM-based Linux gets the rpm.
+	f.mu.Lock()
+	f.queue = append(f.queue, Command{ID: "inst2", CustomerID: customer, Action: "agent.installer",
+		Params: json.RawMessage(`{"request_id":"r2","os":"AlmaLinux 9.4","platforms":["linux-x64"]}`)})
+	f.mu.Unlock()
+	process(t, c)
+	if res := f.result("inst2"); !strings.Contains(fmt.Sprint(res["result"]), "package_type:rpm") || f.codeRequests[1]["label"] != "itdocs:"+customer+":request:r2" {
+		t.Errorf("rpm: %v %v", res, f.codeRequests[1])
+	}
+	// No code is made when a package is missing or the platform unknown.
+	n := len(f.codeRequests)
+	id := f.enqueue("agent.installer", map[string]any{"platforms": []string{"macos-arm64"}})
+	process(t, c)
+	if res := f.result(id); res["status"] != "failed" || !strings.Contains(fmt.Sprint(res["error"]), "nicht unterstützt") {
+		t.Errorf("unknown platform: %v", res)
+	}
+	os.Remove(filepath.Join(dist, "backupzit-agent-0.48.2-x64.msi"))
+	id = f.enqueue("agent.installer", map[string]any{"platforms": []string{"windows-x64"}})
+	process(t, c)
+	if res := f.result(id); !strings.Contains(fmt.Sprint(res["error"]), "kein BackupZit-Agentenpaket") || len(f.codeRequests) != n {
+		t.Errorf("missing package: %v", res)
 	}
 }

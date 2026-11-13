@@ -45,11 +45,22 @@ Der Kundenschlüssel bleibt in BackupZit und geht nicht an die Plattform. Die Pl
 
 ## Auftragsarten
 
-`target.provision`, `target.create`, `target.test`, `agent.enroll_code`, `agent.log`, `job.create`, `job.update`, `job.delete`, `job.run`, `job.restore_test`, `job.enable`, `job.disable`, `run.cancel`, `files.list`, `files.download`, `restore.to_folder`.
+`target.provision`, `target.create`, `target.test`, `agent.enroll_code`, `agent.installer`, `agent.log`, `job.create`, `job.update`, `job.delete`, `job.run`, `job.restore_test`, `job.enable`, `job.disable`, `run.cancel`, `files.list`, `files.download`, `restore.to_folder`.
 
 Angenommen, aber noch abgelehnt mit verständlicher Meldung: `agent.browse`, `restore.files_original`, `restore.machine`, `restore.volumes`.
 
 Funktionen, die BackupZit noch nicht kann, etwa erweiterte Zeitpläne, Aufbewahrung nach Alter oder ein Kennwort pro Job, werden bei `job.create` und `job.update` ignoriert. Sie kommen als `warnings` im Ergebnis zurück. Lokale und Netzwerkziele lehnt der Connector ab.
+
+## Agent-Installation (`agent.installer`)
+
+Nach der Freigabe durch einen Techniker auf dem Mesh-Server stellt die Plattform den Auftrag `agent.installer` ein. Der Connector:
+1. erzeugt einen **Einmal-Enrollment-Code**, 24 Stunden gültig, mit der Kennung `itdocs:<customer_id>:<device_id>`. Der Agent, der sich damit anmeldet, trägt diese Kennung als `enroll_label`, und die Plattform ordnet ihn automatisch dem Gerät zu. Ein zweiter Agent kann mit demselben Code nicht registriert werden.
+2. nimmt das **offizielle, signierte Agentenpaket** aus `/usr/share/backupzit/dist`: Windows als MSI, Linux als deb, bei RHEL-/Alma-/Rocky-/SUSE-Systemen als rpm. Es lädt das Paket über eine signierte URL zur Plattform hoch.
+3. meldet pro Paket `sha256`, `size_bytes`, `version`, `package_type` und die Aufrufparameter zurück:
+   - **msi:** `msiexec /i <datei> <install_args>`, mit `install_args` = `/qn /norestart ENROLLCODE=BZ1-…`
+   - **deb/rpm:** Paket mit dem Paketmanager installieren, danach die Befehle aus `post_install` ausführen (`backupzit-agent enroll --if-not-enrolled --pending-ok --code BZ1-…`, `systemctl restart backupzit-agent`)
+
+Der Code in `install_args` bzw. `post_install` ist ein Geheimnis: nicht protokollieren und nach der Installation löschen.
 
 ## Tests
 

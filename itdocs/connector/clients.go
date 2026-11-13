@@ -220,13 +220,18 @@ func (p *platform) complete(ctx context.Context, id string, result any, failure 
 
 func (p *platform) status(ctx context.Context, s any) error { return p.call(ctx, "/status", s, nil) }
 
-// upload asks for a signed upload URL for a download command and PUTs the file.
-func (p *platform) upload(ctx context.Context, commandID, name, file string) (string, error) {
+// upload asks for a signed upload URL for a command and PUTs the file;
+// extra goes into the request (e.g. "platform" for agent installers).
+func (p *platform) upload(ctx context.Context, commandID, name, file string, extra ...string) (string, error) {
 	var u struct {
 		StoragePath string `json:"storage_path"`
 		SignedURL   string `json:"signed_url"`
 	}
-	if err := p.call(ctx, "/downloads/upload-url", map[string]string{"command_id": commandID, "filename": name}, &u); err != nil {
+	body := map[string]string{"command_id": commandID, "filename": name}
+	for i := 0; i+1 < len(extra); i += 2 {
+		body[extra[i]] = extra[i+1]
+	}
+	if err := p.call(ctx, "/downloads/upload-url", body, &u); err != nil {
 		return "", err
 	}
 	if u.SignedURL == "" {
