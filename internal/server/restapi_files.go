@@ -2,6 +2,8 @@ package server
 
 import (
 	"errors"
+
+	"github.com/max-zit/backupzit/internal/api"
 	"net/http"
 	"strings"
 	"time"
@@ -28,6 +30,9 @@ func (s *Server) registerAPIFiles(mux *http.ServeMux) {
 		run, err := s.store.GetRun(r.Context(), id)
 		if err != nil {
 			return nil, err
+		}
+		if run.Kind == api.KindImageBackup && run.SnapshotID != "" && !run.Expired {
+			return s.imageFileList(r.Context(), run, r.URL.Query().Get("path"))
 		}
 		dir := strings.Join(snapshotComps(r.URL.Query().Get("path")), "/")
 		repoR, sn, err := s.fileSnapshot(r.Context(), run)
@@ -77,7 +82,11 @@ func (s *Server) registerAPIFiles(mux *http.ServeMux) {
 			fail(http.StatusBadRequest, `give the files and folders in "paths", as GET /api/v1/runs/{id}/files lists them`)
 			return
 		}
-		if err := s.downloadFiles(w, r, run, req.Paths); err != nil {
+		download := s.downloadFiles
+		if run.Kind == api.KindImageBackup && run.SnapshotID != "" && !run.Expired {
+			download = s.downloadImageFiles
+		}
+		if err := download(w, r, run, req.Paths); err != nil {
 			var nib notInBackupError
 			switch {
 			case errors.As(err, &nib):

@@ -378,7 +378,7 @@ func (s *Server) handleJobEdit(w http.ResponseWriter, r *http.Request, _ string)
 		return
 	}
 	j := old
-	j.Name, j.Schedule, j.Retention = r.FormValue("name"), sched, retentionFromForm(r)
+	j.Name, j.Schedule, j.Retention = r.FormValue("name"), keepAPIScheduleFields(old.Schedule, sched), retentionFromForm(r)
 	j.Options = optionsFromForm(r, old.Options, canCommands(r))
 	switch old.Kind {
 	case JobFiles:

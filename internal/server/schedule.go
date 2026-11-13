@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,9 @@ const (
 	SchedMonthly  = "monthly"  // on a day of the month at a fixed time
 	SchedAfter    = "after"    // copy jobs: after each backup of the source job
 	SchedChain    = "chain"    // after another job finished (a chain: database, then files)
+	// SchedSinceLast runs a fixed number of hours after the previous
+	// scheduled run (set through the API).
+	SchedSinceLast = "since_last"
 )
 
 // Schedule is a human-friendly backup schedule. It is stored as JSON in
@@ -40,6 +44,28 @@ type Schedule struct {
 	// when that job failed.
 	AfterJob int64 `json:"after_job,omitempty"`
 	AfterAny bool  `json:"after_any,omitempty"`
+
+	// The fields below are set through the API; the console's form keeps
+	// them (see keepAPIScheduleFields).
+
+	// Months limits daily, interval, monthly and since_last schedules to
+	// these months (1..12); empty means every month.
+	Months []int `json:"months,omitempty"`
+	// Week (1..4, 5 = last) with Weekday (0=Sunday..6) runs a monthly
+	// schedule on e.g. the first Monday instead of DayOfMonth.
+	Week    int `json:"week,omitempty"`
+	Weekday int `json:"weekday,omitempty"`
+	// FromTime/ToTime ("HH:MM", ToTime may be "24:00") limit an interval
+	// schedule to a window with minutes; runs start at FromTime and then
+	// every EveryMinutes. They replace FromHour/ToHour.
+	FromTime string `json:"from_time,omitempty"`
+	ToTime   string `json:"to_time,omitempty"`
+	// EveryHours is the gap of SchedSinceLast (1..8760).
+	EveryHours int `json:"every_hours,omitempty"`
+	// ValidFrom and ValidUntil ("YYYY-MM-DD", both days included) limit
+	// the schedule to a period.
+	ValidFrom  string `json:"valid_from,omitempty"`
+	ValidUntil string `json:"valid_until,omitempty"`
 
 	// cron holds a raw cron expression for schedules created before the
 	// friendly format existed.
@@ -132,6 +158,23 @@ func (s *Schedule) Validate() error {
 		s.Days = nil
 	}
 	switch s.Kind {
+	case SchedManual, SchedAfter, SchedChain:
+		s.Months, s.ValidFrom, s.ValidUntil = nil, "", ""
+	default:
+		if err := s.validatePeriod(); err != nil {
+			return err
+		}
+	}
+	if s.Kind != SchedMonthly {
+		s.Week, s.Weekday = 0, 0
+	}
+	if s.Kind != SchedInterval {
+		s.FromTime, s.ToTime = "", ""
+	}
+	if s.Kind != SchedSinceLast {
+		s.EveryHours = 0
+	}
+	switch s.Kind {
 	case SchedManual:
 		return nil
 	case SchedAfter:
@@ -143,6 +186,11 @@ func (s *Schedule) Validate() error {
 			return errors.New("choose the job to run after")
 		}
 		return nil
+	case SchedSinceLast:
+		s.Times = nil
+		if s.EveryHours < 1 || s.EveryHours > 8760 {
+			return errors.New("the hours after the previous backup must be 1 to 8760")
+		}
 	case SchedDaily:
 		if len(s.Times) == 0 {
 			return errors.New("choose at least one time")
@@ -175,8 +223,24 @@ func (s *Schedule) Validate() error {
 				return errors.New("the time window must end after it starts")
 			}
 		}
+		if s.FromTime != "" || s.ToTime != "" {
+			from, to, err := s.minuteWindow()
+			if err != nil {
+				return err
+			}
+			s.FromTime, s.ToTime = fmt.Sprintf("%02d:%02d", from/60, from%60), fmt.Sprintf("%02d:%02d", to/60, to%60)
+			// The hours shown by the console's form.
+			s.FromHour, s.ToHour = from/60, (to+59)/60
+		}
 	case SchedMonthly:
-		if s.DayOfMonth < 1 || s.DayOfMonth > 28 {
+		if s.Week != 0 {
+			if s.Week < 1 || s.Week > 5 || s.Weekday < 0 || s.Weekday > 6 {
+				return errors.New("week must be 1 to 4 or 5 (last), weekday 0 (Sunday) to 6")
+			}
+			s.DayOfMonth = 0
+		} else if s.Weekday != 0 {
+			return errors.New("weekday needs week (1 to 4, or 5 for the last)")
+		} else if s.DayOfMonth < 1 || s.DayOfMonth > 28 {
 			return errors.New("day of month must be between 1 and 28")
 		}
 		if len(s.Times) == 0 {
@@ -233,13 +297,121 @@ func (s Schedule) crons() []string {
 		return []string{fmt.Sprintf("0 %s/%d * * %s", hours, step, s.dowField())}
 	case SchedMonthly:
 		h, m, _ := parseHM(s.Times[0])
+		if s.Week != 0 {
+			return []string{fmt.Sprintf("%d %d * * %d", m, h, s.Weekday)} // the week is checked by allowed
+		}
 		return []string{fmt.Sprintf("%d %d %d * *", m, h, s.DayOfMonth)}
 	}
 	return nil
 }
 
-// Next returns the first run time after t, or zero for manual schedules.
+// Next returns the first run time after t, or zero for manual schedules
+// (and after the end of the schedule's period).
 func (s Schedule) Next(t time.Time) time.Time {
+	next := s.nextRaw(t)
+	for i := 0; i < 2000 && !next.IsZero(); i++ {
+		ok, from := s.allowed(next)
+		switch {
+		case ok:
+			return next
+		case from.IsZero():
+			return time.Time{} // past the end of the period
+		case s.Kind == SchedSinceLast:
+			next = from
+		default:
+			next = s.nextRaw(from.Add(-time.Second))
+		}
+	}
+	return time.Time{}
+}
+
+// allowed checks a run time against the months, period and week of the
+// schedule. When it is not allowed, from is the earliest time that may be
+// (zero: none will).
+func (s Schedule) allowed(t time.Time) (ok bool, from time.Time) {
+	loc := t.Location()
+	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
+	if s.ValidUntil != "" {
+		if until, err := time.ParseInLocation(time.DateOnly, s.ValidUntil, loc); err == nil && day.After(until) {
+			return false, time.Time{}
+		}
+	}
+	if s.ValidFrom != "" {
+		if start, err := time.ParseInLocation(time.DateOnly, s.ValidFrom, loc); err == nil && day.Before(start) {
+			return false, start
+		}
+	}
+	if len(s.Months) > 0 && !slices.Contains(s.Months, int(t.Month())) {
+		first := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, loc)
+		for i := 1; i <= 12; i++ {
+			if m := first.AddDate(0, i, 0); slices.Contains(s.Months, int(m.Month())) {
+				return false, m
+			}
+		}
+		return false, time.Time{}
+	}
+	if s.Kind == SchedMonthly && s.Week != 0 {
+		last := day.AddDate(0, 1, -day.Day()).Day()
+		if in := (s.Week == 5 && t.Day()+7 > last) || (s.Week < 5 && (t.Day()-1)/7+1 == s.Week); !in {
+			return false, t.Add(time.Minute)
+		}
+	}
+	if s.Kind == SchedSinceLast && len(s.Days) > 0 && !slices.Contains(s.Days, int(t.Weekday())) {
+		return false, day.AddDate(0, 0, 1)
+	}
+	return true, time.Time{}
+}
+
+// minuteWindow returns FromTime and ToTime in minutes of the day.
+func (s Schedule) minuteWindow() (from, to int, err error) {
+	if s.FromTime == "" || s.ToTime == "" {
+		return 0, 0, errors.New("give both from_time and to_time")
+	}
+	fh, fm, err := parseHM(s.FromTime)
+	if err != nil {
+		return 0, 0, err
+	}
+	if strings.TrimSpace(s.ToTime) == "24:00" {
+		to = 24 * 60
+	} else {
+		th, tm, err := parseHM(s.ToTime)
+		if err != nil {
+			return 0, 0, err
+		}
+		to = th*60 + tm
+	}
+	from = fh*60 + fm
+	if to <= from {
+		return 0, 0, errors.New("the time window must end after it starts")
+	}
+	return from, to, nil
+}
+
+// nextRaw is the next time after t by the times, days and interval of the
+// schedule, before months, period and week are applied.
+func (s Schedule) nextRaw(t time.Time) time.Time {
+	switch {
+	case s.cron == "" && s.Kind == SchedSinceLast:
+		return t.Add(time.Duration(s.EveryHours) * time.Hour).Truncate(time.Minute)
+	case s.cron == "" && s.Kind == SchedInterval && s.FromTime != "":
+		from, to, err := s.minuteWindow()
+		if err != nil || s.EveryMinutes <= 0 {
+			return time.Time{}
+		}
+		loc := t.Location()
+		for d := 0; d <= 8; d++ {
+			day := time.Date(t.Year(), t.Month(), t.Day()+d, 0, 0, 0, 0, loc)
+			if len(s.Days) > 0 && !slices.Contains(s.Days, int(day.Weekday())) {
+				continue
+			}
+			for m := from; m < to; m += s.EveryMinutes {
+				if c := time.Date(day.Year(), day.Month(), day.Day(), m/60, m%60, 0, 0, loc); c.After(t) {
+					return c
+				}
+			}
+		}
+		return time.Time{}
+	}
 	var next time.Time
 	for _, expr := range s.crons() {
 		c, err := cronParser.Parse(expr)
@@ -279,7 +451,35 @@ func (s Schedule) DescribeIn(l *language) string {
 	if s.cron != "" {
 		return "cron: " + s.cron
 	}
+	d := s.describeBase(l)
+	if len(s.Months) > 0 {
+		m := make([]string, len(s.Months))
+		for i, n := range s.Months {
+			m[i] = strconv.Itoa(n)
+		}
+		d = l.T("%s; months %s", d, strings.Join(m, ", "))
+	}
+	if s.ValidFrom != "" {
+		d = l.T("%s; from %s", d, s.ValidFrom)
+	}
+	if s.ValidUntil != "" {
+		d = l.T("%s; until %s", d, s.ValidUntil)
+	}
+	return d
+}
+
+// monthlyWeek are the texts of monthly schedules on a weekday, by Week.
+var monthlyWeek = []string{"", "Monthly on the first %s at %s", "Monthly on the second %s at %s",
+	"Monthly on the third %s at %s", "Monthly on the fourth %s at %s", "Monthly on the last %s at %s"}
+
+func (s Schedule) describeBase(l *language) string {
 	switch s.Kind {
+	case SchedSinceLast:
+		d := l.T("Every %d h after the previous backup", s.EveryHours)
+		if len(s.Days) > 0 {
+			d += ", " + s.daysText(l)
+		}
+		return d
 	case SchedDaily:
 		d := []rune(s.daysText(l))
 		return l.T("%s at %s", strings.ToUpper(string(d[:1]))+string(d[1:]), strings.Join(s.Times, ", "))
@@ -293,11 +493,16 @@ func (s Schedule) DescribeIn(l *language) string {
 		default:
 			every = l.T("Every %d hours", s.EveryMinutes/60)
 		}
-		if s.FromHour != 0 || s.ToHour != 0 {
+		if s.FromTime != "" {
+			every = l.T("%s between %s and %s", every, s.FromTime, s.ToTime)
+		} else if s.FromHour != 0 || s.ToHour != 0 {
 			every = l.T("%s between %02d:00 and %02d:00", every, s.FromHour, s.ToHour)
 		}
 		return every + ", " + s.daysText(l)
 	case SchedMonthly:
+		if s.Week >= 1 && s.Week <= 5 {
+			return l.T(monthlyWeek[s.Week], l.T(dayNames[s.Weekday]), s.Times[0])
+		}
 		return l.T("Monthly on day %d at %s", s.DayOfMonth, s.Times[0])
 	case SchedAfter:
 		return l.T("After each backup of the source job")
@@ -312,3 +517,37 @@ func (s Schedule) DescribeIn(l *language) string {
 
 // IsManual reports whether the job only runs when started by hand.
 func (s Schedule) IsManual() bool { return s.cron == "" && (s.Kind == SchedManual || s.Kind == "") }
+
+// validatePeriod checks and normalizes Months, ValidFrom and ValidUntil.
+func (s *Schedule) validatePeriod() error {
+	var months []int
+	for _, m := range s.Months {
+		if m < 1 || m > 12 {
+			return fmt.Errorf("invalid month %d (1 to 12)", m)
+		}
+		if !slices.Contains(months, m) {
+			months = append(months, m)
+		}
+	}
+	sort.Ints(months)
+	if len(months) == 12 {
+		months = nil
+	}
+	s.Months = months
+	var from, until time.Time
+	var err error
+	if s.ValidFrom != "" {
+		if from, err = time.Parse(time.DateOnly, s.ValidFrom); err != nil {
+			return fmt.Errorf("invalid valid_from %q (use YYYY-MM-DD)", s.ValidFrom)
+		}
+	}
+	if s.ValidUntil != "" {
+		if until, err = time.Parse(time.DateOnly, s.ValidUntil); err != nil {
+			return fmt.Errorf("invalid valid_until %q (use YYYY-MM-DD)", s.ValidUntil)
+		}
+		if !from.IsZero() && until.Before(from) {
+			return errors.New("valid_until is before valid_from")
+		}
+	}
+	return nil
+}

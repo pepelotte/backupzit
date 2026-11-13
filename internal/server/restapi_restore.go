@@ -1,11 +1,14 @@
 package server
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/max-zit/backupzit/internal/api"
 )
 
 // apiRestoreRequest is the body of POST /api/v1/runs/{id}/restore: files
@@ -53,6 +56,19 @@ func (s *Server) registerAPIRestore(mux *http.ServeMux) {
 			if p = strings.TrimSpace(p); p != "" {
 				paths = append(paths, p)
 			}
+		}
+		if b.Kind == api.KindImageBackup {
+			// Files from a disk image: paths as GET /runs/{id}/files lists
+			// them; one restore run per volume.
+			if _, err := s.store.GetAgent(r.Context(), req.AgentID); err != nil {
+				return nil, apiErr(http.StatusConflict, "unknown agent")
+			}
+			ids, err := s.queueImageFileRestore(r.Context(), b, req.AgentID, paths, req.Target)
+			if err != nil {
+				return nil, err
+			}
+			s.audit(r, "api.restore", "runs %v: files from image backup #%d to %q on agent %d", ids, id, cmp.Or(req.Target, "the original location"), req.AgentID)
+			return map[string]any{"run_id": ids[0], "run_ids": ids}, nil
 		}
 		rid, err := s.store.QueueRestore(r.Context(), id, req.AgentID, req.Target, paths, req.Verify)
 		if err != nil {

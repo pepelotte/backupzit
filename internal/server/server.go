@@ -292,11 +292,44 @@ func scheduleFromForm(r *http.Request) (string, error) {
 	case SchedChain:
 		sc.AfterJob, _ = strconv.ParseInt(r.FormValue("sched_after_job"), 10, 64)
 		sc.AfterAny = r.FormValue("sched_after_any") == "on"
+	case SchedSinceLast: // set through the API; the form keeps it
+		sc.EveryHours, _ = strconv.Atoi(r.FormValue("sched_every_hours"))
+		sc.Days = nil
 	}
 	if err := sc.Validate(); err != nil {
 		return "", err
 	}
 	return sc.Encode(), nil
+}
+
+// keepAPIScheduleFields carries the schedule fields that only the API sets
+// (months, period, week of the month, a window with minutes, the days of a
+// since_last schedule) from the old schedule to the one posted by the
+// console's form, as long as the form left the parts it shows unchanged.
+func keepAPIScheduleFields(oldStored, newStored string) string {
+	o, err1 := ParseSchedule(oldStored)
+	n, err2 := ParseSchedule(newStored)
+	if err1 != nil || err2 != nil || o.Kind != n.Kind || o.cron != "" || n.cron != "" {
+		return newStored
+	}
+	n.Months, n.ValidFrom, n.ValidUntil = o.Months, o.ValidFrom, o.ValidUntil
+	switch n.Kind {
+	case SchedMonthly:
+		// The form shows day 1 for a schedule on a weekday.
+		if o.Week != 0 && n.DayOfMonth == 1 {
+			n.Week, n.Weekday, n.DayOfMonth = o.Week, o.Weekday, 0
+		}
+	case SchedInterval:
+		if o.FromTime != "" && n.FromHour == o.FromHour && n.ToHour == o.ToHour && n.EveryMinutes == o.EveryMinutes {
+			n.FromTime, n.ToTime = o.FromTime, o.ToTime
+		}
+	case SchedSinceLast:
+		n.Days = o.Days
+	}
+	if n.Validate() != nil {
+		return newStored
+	}
+	return n.Encode()
 }
 
 // fileExists reports whether the embedded templates hold a file.

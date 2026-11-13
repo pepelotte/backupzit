@@ -265,6 +265,39 @@ func (s *Store) CreateEnrollmentTokenWith(ctx context.Context, ttl time.Duration
 	return tok, exp, err
 }
 
+// EnrollmentCode is an unexpired enrollment code without its secret.
+type EnrollmentCode struct {
+	ID        int64     `json:"id"`
+	Label     string    `json:"label"`
+	SingleUse bool      `json:"single_use"`
+	Expires   time.Time `json:"expires"`
+}
+
+// ListEnrollmentCodes lists the unexpired enrollment codes whose label
+// starts with prefix ("" = all).
+func (s *Store) ListEnrollmentCodes(ctx context.Context, prefix string) ([]EnrollmentCode, error) {
+	rows, err := s.db.Query(ctx, `SELECT id, label, single_use, expires_at FROM enrollment_tokens
+		WHERE expires_at > now() AND starts_with(label, $1) ORDER BY expires_at`, prefix)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (EnrollmentCode, error) {
+		var c EnrollmentCode
+		err := r.Scan(&c.ID, &c.Label, &c.SingleUse, &c.Expires)
+		return c, err
+	})
+}
+
+// RevokeEnrollmentCodes deletes the enrollment codes whose label starts
+// with prefix, or the one with id (id > 0), and returns how many.
+func (s *Store) RevokeEnrollmentCodes(ctx context.Context, prefix string, id int64) (int64, error) {
+	ct, err := s.db.Exec(ctx, `DELETE FROM enrollment_tokens WHERE ($2 > 0 AND id=$2) OR ($2 = 0 AND starts_with(label, $1))`, prefix, id)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
+}
+
 var unsafeDirChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
 // agentRepoDir builds a readable, unique repository directory name.
