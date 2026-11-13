@@ -192,6 +192,52 @@
         },
         "type": "object"
       },
+      "DiskRestoreRequest": {
+        "description": "Disk image backups (Windows): disk or image selects the disk of the backup (default the first), target_disk the disk to overwrite. Linux system backups: device.",
+        "properties": {
+          "agent_id": {
+            "description": "Machine with the target disk, e.g. one started from the recovery media; 0 = the backed-up one",
+            "format": "int64",
+            "type": "integer"
+          },
+          "confirm_erase": {
+            "description": "Must be true: everything on the target disk is erased",
+            "type": "boolean"
+          },
+          "device": {
+            "description": "Linux system: the target disk, e.g. /dev/sdb",
+            "type": "string"
+          },
+          "disk": {
+            "description": "Image: the disk's number when it was backed up",
+            "type": "integer"
+          },
+          "driver_path": {
+            "description": "Image with new_hardware: extra driver folders on the target machine, separated by ;",
+            "type": "string"
+          },
+          "image": {
+            "description": "Image: the disk's index in image_disks",
+            "type": "integer"
+          },
+          "keep_offline": {
+            "description": "Image: leave the disk offline afterwards (the original disk is in the same machine)",
+            "type": "boolean"
+          },
+          "new_hardware": {
+            "description": "Prepare the restored system for other hardware",
+            "type": "boolean"
+          },
+          "target_disk": {
+            "description": "Image: number of the disk to overwrite (not the one with the running Windows)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "confirm_erase"
+        ],
+        "type": "object"
+      },
       "EnrollCode": {
         "properties": {
           "code": {
@@ -218,6 +264,25 @@
         },
         "type": "object"
       },
+      "EnrollCodeInfo": {
+        "properties": {
+          "expires": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          },
+          "single_use": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "EnrollCodeRequest": {
         "description": "Optional; without a body the code is valid for 7 days and reusable.",
         "properties": {
@@ -235,6 +300,19 @@
             "maximum": 43200,
             "minimum": 5,
             "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "EnrollCodeRevoke": {
+        "description": "Either id or label_prefix",
+        "properties": {
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "label_prefix": {
+            "type": "string"
           }
         },
         "type": "object"
@@ -294,6 +372,76 @@
           },
           "windows": {
             "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "ImageDisk": {
+        "properties": {
+          "index": {
+            "description": "Position in the backup (image of restore-disk)",
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "number": {
+            "description": "Disk number when it was backed up (disk of restore-disk)",
+            "type": "integer"
+          },
+          "partitions": {
+            "items": {
+              "$ref": "#/components/schemas/ImagePartition"
+            },
+            "type": "array"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "style": {
+            "enum": [
+              "gpt",
+              "mbr"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ImagePartition": {
+        "properties": {
+          "file_system": {
+            "type": "string"
+          },
+          "folder": {
+            "description": "First folder of this volume in GET /api/v1/runs/{id}/files (NTFS volumes)",
+            "type": "string"
+          },
+          "included": {
+            "description": "The contents were backed up (otherwise only the layout)",
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "mount_points": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "used": {
+            "description": "Bytes of the blocks that held data",
+            "format": "int64",
+            "type": "integer"
           }
         },
         "type": "object"
@@ -646,6 +794,16 @@
             "description": "Bytes",
             "format": "int64",
             "type": "integer"
+          },
+          "used": {
+            "description": "Bytes in use at the newest successful image backup of the partition (absent without one)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "used_at": {
+            "description": "When used was measured (end of that backup)",
+            "format": "date-time",
+            "type": "string"
           }
         },
         "type": "object"
@@ -846,6 +1004,13 @@
             "format": "int64",
             "type": "integer"
           },
+          "image_disks": {
+            "description": "Disk image backups: the disks in the backup",
+            "items": {
+              "$ref": "#/components/schemas/ImageDisk"
+            },
+            "type": "array"
+          },
           "job": {
             "type": "string"
           },
@@ -922,13 +1087,19 @@
             "type": "integer"
           },
           "days": {
-            "description": "daily and interval: weekdays, 0 = Sunday; empty = every day",
+            "description": "daily, interval and since_last: weekdays, 0 = Sunday; empty = every day",
             "items": {
               "maximum": 6,
               "minimum": 0,
               "type": "integer"
             },
             "type": "array"
+          },
+          "every_hours": {
+            "description": "since_last: hours after the previous scheduled run (1-8760); days limits it to weekdays",
+            "maximum": 8760,
+            "minimum": 1,
+            "type": "integer"
           },
           "every_minutes": {
             "description": "interval: a divisor of 60 below an hour (5, 10, 15, 20, 30), or whole hours that divide 24 (60, 120, 180, 240, 360, 480, 720, 1440)",
@@ -938,17 +1109,31 @@
             "description": "interval: from this hour (inclusive)",
             "type": "integer"
           },
+          "from_time": {
+            "description": "interval: window start HH:MM; runs start at from_time and then every every_minutes. Replaces from_hour/to_hour",
+            "type": "string"
+          },
           "kind": {
-            "description": "after: copy jobs, after each backup of the source job",
+            "description": "after: copy jobs, after each backup of the source job; since_last: every_hours after the previous scheduled run",
             "enum": [
               "manual",
               "daily",
               "interval",
               "monthly",
+              "since_last",
               "chain",
               "after"
             ],
             "type": "string"
+          },
+          "months": {
+            "description": "daily, interval, monthly, since_last: only in these months (1-12); empty = every month",
+            "items": {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
           },
           "times": {
             "items": {
@@ -959,6 +1144,32 @@
           },
           "to_hour": {
             "description": "interval: to this hour (exclusive)",
+            "type": "integer"
+          },
+          "to_time": {
+            "description": "interval: window end HH:MM (exclusive, 24:00 allowed)",
+            "type": "string"
+          },
+          "valid_from": {
+            "description": "First day the schedule runs (YYYY-MM-DD)",
+            "format": "date",
+            "type": "string"
+          },
+          "valid_until": {
+            "description": "Last day the schedule runs (YYYY-MM-DD)",
+            "format": "date",
+            "type": "string"
+          },
+          "week": {
+            "description": "monthly: 1-4 = first to fourth, 5 = last weekday of the month; with weekday, replaces day_of_month",
+            "maximum": 5,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "weekday": {
+            "description": "monthly with week: 0 = Sunday ... 6 = Saturday",
+            "maximum": 6,
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -1135,6 +1346,11 @@
             "description": "Own recovery key (32 letters and digits in groups of four); generated when empty",
             "type": "string"
           },
+          "recovery_key_from": {
+            "description": "ID of an encrypted target whose recovery key the new target uses (one key for e.g. a NAS and the cloud copy); the key is then not returned",
+            "format": "int64",
+            "type": "integer"
+          },
           "s3_access_key": {
             "type": "string"
           },
@@ -1216,6 +1432,11 @@
             "description": "Only for encrypted targets, only in this response: keep it safe, without it the backups cannot be read if the console is lost",
             "type": "string"
           },
+          "recovery_key_from": {
+            "description": "Set when the target uses the recovery key of that target",
+            "format": "int64",
+            "type": "integer"
+          },
           "target": {
             "$ref": "#/components/schemas/Target"
           },
@@ -1237,6 +1458,34 @@
           },
           "ok": {
             "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "TargetUpdate": {
+        "description": "Name and credentials of a storage target; fields not given stay. Type, location and recovery key cannot change.",
+        "properties": {
+          "azure_secret": {
+            "description": "Account key or SAS token, as the target uses",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "s3_access_key": {
+            "type": "string"
+          },
+          "s3_secret_key": {
+            "type": "string"
+          },
+          "sftp_password": {
+            "type": "string"
+          },
+          "smb_domain": {
+            "type": "string"
+          },
+          "smb_password": {
+            "type": "string"
           }
         },
         "type": "object"
@@ -1322,6 +1571,88 @@
           }
         },
         "summary": "Create an enrollment code",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/agents/enroll-codes": {
+      "get": {
+        "description": "Role: backup operator. The unexpired enrollment and recovery codes, without the code itself.",
+        "operationId": "listEnrollCodes",
+        "parameters": [
+          {
+            "description": "Only codes whose label starts with this",
+            "in": "query",
+            "name": "label_prefix",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EnrollCodeInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Codes"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "summary": "List enrollment codes",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/agents/enroll-codes/revoke": {
+      "post": {
+        "description": "Role: backup operator. Deletes one code (id) or all codes whose label starts with label_prefix; agents already enrolled stay.",
+        "operationId": "revokeEnrollCodes",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollCodeRevoke"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "revoked": {
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Number revoked"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "summary": "Revoke enrollment codes",
         "tags": [
           "agents"
         ]
@@ -1968,7 +2299,7 @@
     },
     "/api/v1/runs/{id}/files": {
       "get": {
-        "description": "Role: restore operator. {id} is a file or Linux system backup on network storage; the console reads it from the storage.",
+        "description": "Role: restore operator. {id} is a file or Linux system backup on network storage; the console reads it from the storage. Disk image backups: the first level lists the NTFS volumes (\"C\" for C:\\), below it their files.",
         "operationId": "listFiles",
         "parameters": [
           {
@@ -2125,7 +2456,7 @@
     },
     "/api/v1/runs/{id}/restore": {
       "post": {
-        "description": "Role: restore operator. {id} is a successful backup run (files, Linux system, Microsoft 365 or a copy of file backups). An agent writes the files into a folder or back to where they were backed up from. Disk images, VMs and databases are restored in the console.",
+        "description": "Role: restore operator. {id} is a successful backup run (files, Linux system, Microsoft 365, a copy of file backups, or a disk image). An agent writes the files into a folder or back to where they were backed up from. For a disk image, paths are required and given as GET /api/v1/runs/{id}/files lists them (the first folder is the volume); one restore run per volume is queued and listed in run_ids. Whole disks: POST /api/v1/runs/{id}/restore-disk. VMs and databases are restored in the console.",
         "operationId": "restoreFiles",
         "parameters": [
           {
@@ -2160,6 +2491,48 @@
           }
         },
         "summary": "Restore files of a backup",
+        "tags": [
+          "restore"
+        ]
+      }
+    },
+    "/api/v1/runs/{id}/restore-disk": {
+      "post": {
+        "description": "Role: restore operator. {id} is a successful disk image backup (Windows) or Linux system backup. Overwrites a whole disk of an agent, also one started from the recovery media. A machine with several disks is restored one disk per call.",
+        "operationId": "restoreDisk",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiskRestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/Queued"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "summary": "Restore a disk image or Linux system onto a disk",
         "tags": [
           "restore"
         ]
@@ -2280,6 +2653,52 @@
           }
         },
         "summary": "Create a storage target",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
+    "/api/v1/targets/{id}": {
+      "patch": {
+        "description": "Role: administrator. For new passwords or rotated keys; agents use them from their next run.",
+        "operationId": "updateTarget",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Target"
+                }
+              }
+            },
+            "description": "Target"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "summary": "Change a storage target's name or credentials",
         "tags": [
           "storage"
         ]

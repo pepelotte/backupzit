@@ -263,6 +263,9 @@ type apiRun struct {
 	Expired    bool            `json:"expired"`
 	// Commands: outcome and output of the commands before and after a backup.
 	Commands json.RawMessage `json:"commands,omitempty"`
+	// ImageDisks: the disks of a disk image backup, for restore-disk and
+	// the volumes in the file list.
+	ImageDisks []apiImageDisk `json:"image_disks,omitempty"`
 }
 
 func toAPIAgent(a Agent) apiAgent {
@@ -294,7 +297,7 @@ func toAPIRunJSON(r Run) apiRun {
 	return apiRun{ID: r.ID, Kind: r.Kind, Status: r.Status, Trigger: r.Trigger, AgentID: r.AgentID, Agent: r.Hostname,
 		JobID: r.JobID, Job: deref(r.JobName), QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		DurationS: int(r.Duration().Seconds()), Snapshot: r.SnapshotID, Message: r.Message, Errors: r.Errors,
-		Stats: r.Stats, Suspicious: r.Anomaly, Expired: r.Expired, Commands: r.Commands}
+		Stats: r.Stats, Suspicious: r.Anomaly, Expired: r.Expired, Commands: r.Commands, ImageDisks: toAPIImageDisks(r)}
 }
 
 func pathInt(r *http.Request, name string) (int64, error) {
@@ -447,6 +450,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	s.registerAPIManage(mux)
 	s.registerAPIJobs(mux)
 	s.registerAPIFiles(mux)
+	s.registerAPIImage(mux)
 }
 
 // ---- token management pages (My account)

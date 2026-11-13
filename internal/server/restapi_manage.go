@@ -1,15 +1,18 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/max-zit/backupzit/internal/api"
+	"github.com/max-zit/backupzit/internal/imaging"
 )
 
 // REST API endpoints that set BackupZit up: storage targets and agent
@@ -29,6 +32,10 @@ func apiTargetJSON(t Target) map[string]any {
 type apiTargetRequest struct {
 	targetInput
 	Encrypted *bool `json:"encrypted"`
+	// RecoveryKeyFrom encrypts the new target with the recovery key of an
+	// existing encrypted target, so one key restores both (e.g. a NAS and
+	// the cloud copy of the same customer). The key is then not returned.
+	RecoveryKeyFrom int64 `json:"recovery_key_from"`
 }
 
 // apiDisk and apiPartition describe the disks an agent reported, for image
@@ -51,6 +58,10 @@ type apiPartition struct {
 	FileSystem  string   `json:"file_system,omitempty"`
 	Label       string   `json:"label,omitempty"`
 	MountPoints []string `json:"mount_points,omitempty"`
+	// Used and UsedAt: the space in use at the newest successful image
+	// backup of the partition (agents report sizes only).
+	Used   *uint64    `json:"used,omitempty"`
+	UsedAt *time.Time `json:"used_at,omitempty"`
 }
 
 func toAPIDisks(a Agent) []apiDisk {
@@ -81,6 +92,7 @@ func decodeJSON(r *http.Request, v any) error {
 }
 
 func (s *Server) registerAPIManage(mux *http.ServeMux) {
+	s.registerAPIEnrollCodes(mux)
 	mux.HandleFunc("POST /api/v1/targets", s.api(PermStorage, func(w http.ResponseWriter, r *http.Request) (any, error) {
 		var req apiTargetRequest
 		if err := decodeJSON(r, &req); err != nil {
@@ -89,9 +101,22 @@ func (s *Server) registerAPIManage(mux *http.ServeMux) {
 		in := req.targetInput
 		in.Encrypted = req.Encrypted == nil || *req.Encrypted
 		in.S3Immutable = in.S3LockDays != 0
+		if req.RecoveryKeyFrom != 0 && (!in.Encrypted || strings.TrimSpace(in.RecoveryKey) != "") {
+			return nil, apiErr(http.StatusBadRequest, "recovery_key_from needs an encrypted target and no recovery_key")
+		}
 		t, err := in.target()
 		if err != nil {
 			return nil, apiErr(http.StatusBadRequest, "%s", err.Error())
+		}
+		var from Target
+		if req.RecoveryKeyFrom != 0 {
+			if from, err = s.store.GetTarget(r.Context(), req.RecoveryKeyFrom); err != nil {
+				return nil, apiErr(http.StatusBadRequest, "recovery_key_from: no storage target %d", req.RecoveryKeyFrom)
+			}
+			if !from.Encrypted || from.RecoveryKey == "" {
+				return nil, apiErr(http.StatusBadRequest, "recovery_key_from: storage target %d is not encrypted", from.ID)
+			}
+			t.RecoveryKey = from.RecoveryKey
 		}
 		id, err := s.store.CreateTarget(r.Context(), t)
 		if err != nil {
@@ -106,7 +131,10 @@ func (s *Server) registerAPIManage(mux *http.ServeMux) {
 		// The recovery key is shown once, like the sheet the console offers
 		// after creating a target: without it the backups cannot be read
 		// if the console is lost.
-		if saved.Encrypted {
+		if saved.Encrypted && req.RecoveryKeyFrom != 0 {
+			out["recovery_key_from"] = from.ID
+			s.audit(r, "storage.recovery_key", "%s uses the recovery key of %s", saved.Name, from.Name)
+		} else if saved.Encrypted {
 			out["recovery_key"] = saved.RecoveryKey
 			s.audit(r, "storage.recovery_key", "recovery key of %s returned to the API client that created it", saved.Name)
 		}
@@ -116,6 +144,59 @@ func (s *Server) registerAPIManage(mux *http.ServeMux) {
 			out["test"] = s.apiTargetTest(r, saved)
 		}
 		return out, nil
+	}))
+	mux.HandleFunc("PATCH /api/v1/targets/{id}", s.api(PermStorage, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		id, err := pathInt(r, "id")
+		if err != nil {
+			return nil, err
+		}
+		// Name and credentials; fields not given stay.
+		var req struct {
+			Name         *string `json:"name"`
+			SFTPPassword *string `json:"sftp_password"`
+			S3AccessKey  *string `json:"s3_access_key"`
+			S3SecretKey  *string `json:"s3_secret_key"`
+			SMBPassword  *string `json:"smb_password"`
+			SMBDomain    *string `json:"smb_domain"`
+			AzureSecret  *string `json:"azure_secret"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			return nil, err
+		}
+		t, err := s.store.GetTarget(r.Context(), id)
+		if err != nil {
+			return nil, err
+		}
+		set := func(dst *string, v *string) {
+			if v != nil {
+				*dst = *v
+			}
+		}
+		set(&t.Name, req.Name)
+		set(&t.SFTPPassword, req.SFTPPassword)
+		set(&t.S3AccessKey, req.S3AccessKey)
+		set(&t.S3SecretKey, req.S3SecretKey)
+		set(&t.SMBPassword, req.SMBPassword)
+		set(&t.SMBDomain, req.SMBDomain)
+		if req.AzureSecret != nil {
+			if t.AzureSAS != "" {
+				t.AzureSAS = strings.TrimPrefix(strings.TrimSpace(*req.AzureSecret), "?")
+			} else {
+				t.AzureKey = strings.TrimSpace(*req.AzureSecret)
+			}
+		}
+		if err := s.store.UpdateTarget(r.Context(), t); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return nil, err
+			}
+			return nil, apiErr(http.StatusBadRequest, "%s", err.Error())
+		}
+		s.audit(r, "storage.update", "%s (%s) %s: name or credentials changed", t.Name, t.Kind, t.URL)
+		saved, err := s.store.GetTarget(r.Context(), id)
+		if err != nil {
+			return nil, err
+		}
+		return apiTargetJSON(saved), nil
 	}))
 	mux.HandleFunc("POST /api/v1/targets/{id}/test", s.api(PermStorage, func(w http.ResponseWriter, r *http.Request) (any, error) {
 		id, err := pathInt(r, "id")
@@ -162,6 +243,39 @@ func (s *Server) registerAPIManage(mux *http.ServeMux) {
 	}))
 }
 
+// registerAPIEnrollCodes lists and revokes enrollment codes (also the
+// recovery codes on recovery media): by label prefix, or one by id.
+func (s *Server) registerAPIEnrollCodes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/agents/enroll-codes", s.api(PermAgents, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		codes, err := s.store.ListEnrollmentCodes(r.Context(), r.URL.Query().Get("label_prefix"))
+		if err != nil {
+			return nil, err
+		}
+		if codes == nil {
+			codes = []EnrollmentCode{}
+		}
+		return codes, nil
+	}))
+	mux.HandleFunc("POST /api/v1/agents/enroll-codes/revoke", s.api(PermAgents, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var req struct {
+			ID          int64  `json:"id"`
+			LabelPrefix string `json:"label_prefix"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			return nil, err
+		}
+		if (req.ID > 0) == (req.LabelPrefix != "") || req.ID < 0 {
+			return nil, apiErr(http.StatusBadRequest, "give either id or label_prefix")
+		}
+		n, err := s.store.RevokeEnrollmentCodes(r.Context(), req.LabelPrefix, req.ID)
+		if err != nil {
+			return nil, err
+		}
+		s.audit(r, "agent.enroll_code", "%d enrollment codes revoked (id %d, label prefix %q)", n, req.ID, req.LabelPrefix)
+		return map[string]int64{"revoked": n}, nil
+	}))
+}
+
 // apiTargetTest runs the connection test of the Storage page.
 func (s *Server) apiTargetTest(r *http.Request, t Target) map[string]any {
 	ok, err := testTarget(r.Context(), t)
@@ -170,4 +284,68 @@ func (s *Server) apiTargetTest(r *http.Request, t Target) map[string]any {
 		return map[string]any{"ok": false, "message": err.Error()}
 	}
 	return map[string]any{"ok": true, "message": msg}
+}
+
+// addPartitionUsage fills Used of the partitions from the newest
+// successful image backups of the agent: the backup reads only the blocks
+// in use, so their size is the space in use at that time. Disks are matched
+// by their GPT ID or MBR signature (numbers can change), else by number.
+func (s *Server) addPartitionUsage(ctx context.Context, agentID int64, disks []apiDisk, inv []imaging.Disk) {
+	if len(disks) == 0 {
+		return
+	}
+	rows, err := s.store.db.Query(ctx, `SELECT details, finished_at FROM runs
+		WHERE agent_id=$1 AND kind='image-backup' AND status IN ('success','warning') AND details IS NOT NULL AND NOT expired
+		ORDER BY finished_at DESC LIMIT 20`, agentID)
+	if err != nil {
+		return
+	}
+	type part struct {
+		used uint64
+		at   time.Time
+	}
+	found := map[string]part{} // disk key + "/" + partition number, newest first wins
+	for rows.Next() {
+		var details []byte
+		var at *time.Time
+		if rows.Scan(&details, &at) != nil || at == nil {
+			continue
+		}
+		for _, d := range imageDetails(Run{Kind: api.KindImageBackup, Details: details}) {
+			for _, p := range d.Partitions {
+				if !p.Included || p.StoredBytes == 0 {
+					continue
+				}
+				k := diskKey(d.GPTDiskID, d.MBRSignature, d.Number) + "/" + strconv.Itoa(p.Number)
+				if _, ok := found[k]; !ok {
+					found[k] = part{p.StoredBytes, *at}
+				}
+			}
+		}
+	}
+	rows.Close()
+	for i := range disks {
+		var key string
+		for _, d := range inv {
+			if d.Number == disks[i].Number {
+				key = diskKey(d.GPTDiskID, d.MBRSignature, d.Number)
+			}
+		}
+		for j := range disks[i].Partitions {
+			p := &disks[i].Partitions[j]
+			if f, ok := found[key+"/"+strconv.Itoa(p.Number)]; ok && f.used <= p.Size {
+				p.Used, p.UsedAt = &f.used, &f.at
+			}
+		}
+	}
+}
+
+func diskKey(gptID string, mbr uint32, number int) string {
+	switch {
+	case gptID != "":
+		return "gpt:" + strings.ToLower(gptID)
+	case mbr != 0:
+		return "mbr:" + strconv.FormatUint(uint64(mbr), 16)
+	}
+	return "n:" + strconv.Itoa(number)
 }
