@@ -20,6 +20,14 @@ type progressEntry struct {
 	api.RunProgress
 	agentID int64 // the agent that reported it
 	at      time.Time
+	// earlier are the reports of the last minute; the speed is measured
+	// from the oldest.
+	earlier []progressSample
+}
+
+type progressSample struct {
+	done uint64
+	at   time.Time
 }
 
 // set records the progress an agent reported; entries of runs that stopped
@@ -31,13 +39,39 @@ func (p *liveProgress) set(agentID int64, list []api.RunProgress, now time.Time)
 		p.m = map[int64]progressEntry{}
 	}
 	for _, x := range list {
-		p.m[x.RunID] = progressEntry{RunProgress: x, agentID: agentID, at: now}
+		e := progressEntry{RunProgress: x, agentID: agentID, at: now}
+		if old, ok := p.m[x.RunID]; ok && old.agentID == agentID && x.Done >= old.Done {
+			for _, smp := range append(old.earlier, progressSample{old.Done, old.at}) {
+				if now.Sub(smp.at) <= time.Minute {
+					e.earlier = append(e.earlier, smp)
+				}
+			}
+		}
+		p.m[x.RunID] = e
 	}
 	for id, e := range p.m {
 		if now.Sub(e.at) > 10*time.Minute {
 			delete(p.m, id)
 		}
 	}
+}
+
+// speed is how many bytes per second the run processed in the last minute (0 while
+// that is not known yet), and when the agent last reported.
+func (p *liveProgress) speed(agentID, runID int64) (bps uint64, at time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.m[runID]
+	if !ok || e.agentID != agentID {
+		return 0, time.Time{}
+	}
+	if len(e.earlier) > 0 {
+		base := e.earlier[0]
+		if secs := e.at.Sub(base.at).Seconds(); secs >= 5 && e.Done > base.done {
+			bps = uint64(float64(e.Done-base.done) / secs)
+		}
+	}
+	return bps, e.at
 }
 
 // get is the progress of the run; only its own agent can report it.
@@ -133,4 +167,47 @@ func (s *Store) lastBackupSize(ctx context.Context, jobID, runID int64) (files, 
 	}
 	_ = json.Unmarshal(stats, &st)
 	return st.Files, st.Bytes
+}
+
+// apiProgress is the progress of a running run in the REST API.
+type apiProgress struct {
+	BytesDone    uint64 `json:"bytes_done"`
+	BytesTotal   uint64 `json:"bytes_total,omitempty"`   // disk images; unknown for file backups
+	BytesScanned uint64 `json:"bytes_scanned,omitempty"` // file backups: files read so far, changed or not
+	FilesDone    uint64 `json:"files_done,omitempty"`
+	// Percent is absent while unknown; Estimated marks one estimated from
+	// the job's previous backup.
+	Percent    *int      `json:"percent,omitempty"`
+	Estimated  bool      `json:"estimated,omitempty"`
+	SpeedBps   uint64    `json:"speed_bps,omitempty"` // bytes processed per second, recent
+	EtaS       *int64    `json:"eta_s,omitempty"`
+	ReportedAt time.Time `json:"reported_at"`
+}
+
+// toAPIProgress is the progress of a running run, nil when its agent has
+// not reported any.
+func (s *Server) toAPIProgress(ctx context.Context, r Run) *apiProgress {
+	if r.Status != "running" {
+		return nil
+	}
+	x, ok := s.live.get(r.AgentID, r.ID)
+	if !ok {
+		return nil
+	}
+	bps, at := s.live.speed(r.AgentID, r.ID)
+	out := &apiProgress{BytesDone: x.Done, BytesTotal: x.Total, BytesScanned: x.Scanned, FilesDone: x.Files, SpeedBps: bps, ReportedAt: at}
+	if rp := s.withProgress(ctx, []Run{r})[0].Progress; rp != nil && rp.Percent >= 0 {
+		pc := rp.Percent
+		out.Percent, out.Estimated = &pc, rp.Estimated
+	}
+	switch {
+	case x.Total > 0 && bps > 0 && x.Total >= x.Done:
+		eta := int64((x.Total - x.Done) / bps) // #nosec G115 -- seconds, small
+		out.EtaS = &eta
+	case out.Percent != nil && *out.Percent > 0 && r.StartedAt != nil:
+		el := at.Sub(*r.StartedAt).Seconds()
+		eta := int64(el * float64(100-*out.Percent) / float64(*out.Percent))
+		out.EtaS = &eta
+	}
+	return out
 }

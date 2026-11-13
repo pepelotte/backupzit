@@ -266,6 +266,8 @@ type apiRun struct {
 	// ImageDisks: the disks of a disk image backup, for restore-disk and
 	// the volumes in the file list.
 	ImageDisks []apiImageDisk `json:"image_disks,omitempty"`
+	// Progress: running runs, as far as the agent reported.
+	Progress *apiProgress `json:"progress,omitempty"`
 }
 
 func toAPIAgent(a Agent) apiAgent {
@@ -388,7 +390,9 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 			if st := q.Get("status"); st != "" && x.Status != st {
 				continue
 			}
-			out = append(out, toAPIRunJSON(x))
+			j := toAPIRunJSON(x)
+			j.Progress = s.toAPIProgress(r.Context(), x)
+			out = append(out, j)
 		}
 		return out, err
 	}))
@@ -401,7 +405,9 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 		if err != nil {
 			return nil, err
 		}
-		return toAPIRunJSON(x), nil
+		j := toAPIRunJSON(x)
+		j.Progress = s.toAPIProgress(r.Context(), x)
+		return j, nil
 	}))
 	mux.HandleFunc("POST /api/v1/runs/{id}/cancel", s.api(PermRun, func(w http.ResponseWriter, r *http.Request) (any, error) {
 		id, err := pathInt(r, "id")

@@ -1026,6 +1026,9 @@
           "message": {
             "type": "string"
           },
+          "progress": {
+            "$ref": "#/components/schemas/RunProgress"
+          },
           "queued_at": {
             "format": "date-time",
             "type": "string"
@@ -1054,6 +1057,54 @@
           "trigger": {
             "example": "schedule",
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "RunProgress": {
+        "description": "Progress of a running run as its agent reports it (with each poll)",
+        "properties": {
+          "bytes_done": {
+            "description": "Bytes processed",
+            "format": "int64",
+            "type": "integer"
+          },
+          "bytes_scanned": {
+            "description": "File backups: size of the files read so far, changed or not",
+            "format": "int64",
+            "type": "integer"
+          },
+          "bytes_total": {
+            "description": "Bytes in all (disk images, VMs); absent for file backups",
+            "format": "int64",
+            "type": "integer"
+          },
+          "estimated": {
+            "description": "percent is estimated from the job's previous backup",
+            "type": "boolean"
+          },
+          "eta_s": {
+            "description": "Estimated seconds left",
+            "format": "int64",
+            "type": "integer"
+          },
+          "files_done": {
+            "description": "Files processed",
+            "format": "int64",
+            "type": "integer"
+          },
+          "percent": {
+            "description": "0-100; absent while unknown",
+            "type": "integer"
+          },
+          "reported_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "speed_bps": {
+            "description": "Bytes processed per second over the last minute",
+            "format": "int64",
+            "type": "integer"
           }
         },
         "type": "object"
