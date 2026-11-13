@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/max-zit/backupzit/internal/api"
 )
@@ -127,14 +129,36 @@ func (s *Server) registerAPIManage(mux *http.ServeMux) {
 		return s.apiTargetTest(r, t), nil
 	}))
 	mux.HandleFunc("POST /api/v1/agents/enroll-code", s.api(PermAgents, func(w http.ResponseWriter, r *http.Request) (any, error) {
-		tok, exp, err := s.store.CreateEnrollmentToken(r.Context(), 7*24*time.Hour)
+		// Optional body: {"ttl_minutes": 120, "single_use": true, "label": "…"}.
+		var req struct {
+			TTLMinutes int    `json:"ttl_minutes"`
+			SingleUse  bool   `json:"single_use"`
+			Label      string `json:"label"`
+		}
+		if r.ContentLength != 0 {
+			if err := decodeJSON(r, &req); err != nil {
+				return nil, err
+			}
+		}
+		ttl := 7 * 24 * time.Hour
+		if req.TTLMinutes != 0 {
+			if req.TTLMinutes < 5 || req.TTLMinutes > 30*24*60 {
+				return nil, apiErr(http.StatusBadRequest, "ttl_minutes must be 5 to 43200 (30 days)")
+			}
+			ttl = time.Duration(req.TTLMinutes) * time.Minute
+		}
+		label := strings.TrimSpace(req.Label)
+		if len(label) > 200 || strings.ContainsFunc(label, unicode.IsControl) {
+			return nil, apiErr(http.StatusBadRequest, "label: at most 200 characters, no control characters")
+		}
+		tok, exp, err := s.store.CreateEnrollmentTokenWith(r.Context(), ttl, req.SingleUse, label)
 		if err != nil {
 			return nil, err
 		}
 		pub := s.publicURL(r)
-		s.audit(r, "agent.enroll_code", "enrollment code created, valid until %s", exp.Format(time.RFC3339))
+		s.audit(r, "agent.enroll_code", "enrollment code created, valid until %s, single use %v, label %q", exp.Format(time.RFC3339), req.SingleUse, label)
 		return map[string]any{"code": api.EncodeEnrollCode(pub, tok, s.CertFingerprint), "expires": exp,
-			"server_url": pub, "fingerprint": s.CertFingerprint}, nil
+			"server_url": pub, "fingerprint": s.CertFingerprint, "single_use": req.SingleUse, "label": label}, nil
 	}))
 }
 

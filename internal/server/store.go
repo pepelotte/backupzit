@@ -252,9 +252,16 @@ func (s *Store) DeleteTarget(ctx context.Context, id int64) error {
 
 // CreateEnrollmentToken returns a new token valid for ttl.
 func (s *Store) CreateEnrollmentToken(ctx context.Context, ttl time.Duration) (string, time.Time, error) {
+	return s.CreateEnrollmentTokenWith(ctx, ttl, false, "")
+}
+
+// CreateEnrollmentTokenWith creates a token that may be used once only and
+// carries a label; an agent enrolled with it keeps the label.
+func (s *Store) CreateEnrollmentTokenWith(ctx context.Context, ttl time.Duration, singleUse bool, label string) (string, time.Time, error) {
 	tok := randomToken(24)
 	exp := time.Now().Add(ttl)
-	_, err := s.db.Exec(ctx, `INSERT INTO enrollment_tokens(token_hash, expires_at) VALUES($1,$2)`, hashToken(tok), exp)
+	_, err := s.db.Exec(ctx, `INSERT INTO enrollment_tokens(token_hash, expires_at, single_use, label) VALUES($1,$2,$3,$4)`,
+		hashToken(tok), exp, singleUse, label)
 	return tok, exp, err
 }
 
@@ -274,24 +281,41 @@ func agentRepoDir(hostname, uuid string) string {
 
 // EnrollAgent validates a token and registers a new agent.
 func (s *Store) EnrollAgent(ctx context.Context, req api.EnrollRequest) (api.EnrollResponse, error) {
-	var ok bool
-	err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM enrollment_tokens WHERE token_hash=$1 AND expires_at > now())`,
-		hashToken(req.Token)).Scan(&ok)
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return api.EnrollResponse{}, err
 	}
-	if !ok {
+	defer tx.Rollback(ctx)
+	// FOR UPDATE: two agents enrolling with one single-use token at the
+	// same moment cannot both succeed.
+	var id int64
+	var singleUse bool
+	var label string
+	err = tx.QueryRow(ctx, `SELECT id, single_use, label FROM enrollment_tokens WHERE token_hash=$1 AND expires_at > now() FOR UPDATE`,
+		hashToken(req.Token)).Scan(&id, &singleUse, &label)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return api.EnrollResponse{}, errors.New("invalid or expired enrollment token")
+	}
+	if err != nil {
+		return api.EnrollResponse{}, err
 	}
 	if strings.TrimSpace(req.Hostname) == "" {
 		return api.EnrollResponse{}, errors.New("hostname is required")
 	}
 	req.Hostname, req.OS, req.Arch, req.Version = clip(req.Hostname, 255), clip(req.OS, 255), clip(req.Arch, 32), clip(req.Version, 64)
 	resp := api.EnrollResponse{AgentUUID: newUUID(), Secret: randomToken(32)}
-	_, err = s.db.Exec(ctx, `INSERT INTO agents(uuid, secret_hash, hostname, repo_dir, os, arch, version, last_seen_at, recovery)
-		VALUES($1,$2,$3,$4,$5,$6,$7,now(),$8)`,
-		resp.AgentUUID, hashToken(resp.Secret), req.Hostname, agentRepoDir(req.Hostname, resp.AgentUUID), req.OS, req.Arch, req.Version, req.Recovery)
-	return resp, err
+	_, err = tx.Exec(ctx, `INSERT INTO agents(uuid, secret_hash, hostname, repo_dir, os, arch, version, last_seen_at, recovery, enroll_label)
+		VALUES($1,$2,$3,$4,$5,$6,$7,now(),$8,$9)`,
+		resp.AgentUUID, hashToken(resp.Secret), req.Hostname, agentRepoDir(req.Hostname, resp.AgentUUID), req.OS, req.Arch, req.Version, req.Recovery, label)
+	if err != nil {
+		return api.EnrollResponse{}, err
+	}
+	if singleUse {
+		if _, err := tx.Exec(ctx, `DELETE FROM enrollment_tokens WHERE id=$1`, id); err != nil {
+			return api.EnrollResponse{}, err
+		}
+	}
+	return resp, tx.Commit(ctx)
 }
 
 // clip bounds strings reported by agents.
@@ -335,6 +359,8 @@ type Agent struct {
 	Hypervisor json.RawMessage
 	// RemovedAt is set for removed agents kept for their backups.
 	RemovedAt *time.Time
+	// EnrollLabel is the label of the enrollment code the agent used.
+	EnrollLabel string
 }
 
 // Disks decodes the reported disk inventory.
@@ -351,11 +377,11 @@ func (a Agent) Online() bool {
 	return a.LastSeen != nil && time.Since(*a.LastSeen) < 3*time.Minute
 }
 
-const agentCols = `id, uuid, hostname, repo_dir, os, arch, version, enrolled_at, last_seen_at, inventory, inventory_at, recovery, local_ips, remote_addr, hypervisor, max_runs, removed_at`
+const agentCols = `id, uuid, hostname, repo_dir, os, arch, version, enrolled_at, last_seen_at, inventory, inventory_at, recovery, local_ips, remote_addr, hypervisor, max_runs, removed_at, enroll_label`
 
 func scanAgent(r pgx.Row, extra ...any) (Agent, error) {
 	var a Agent
-	dest := append([]any{&a.ID, &a.UUID, &a.Hostname, &a.RepoDir, &a.OS, &a.Arch, &a.Version, &a.EnrolledAt, &a.LastSeen, &a.Inventory, &a.InventoryAt, &a.Recovery, &a.LocalIPs, &a.RemoteAddr, &a.Hypervisor, &a.MaxRuns, &a.RemovedAt}, extra...)
+	dest := append([]any{&a.ID, &a.UUID, &a.Hostname, &a.RepoDir, &a.OS, &a.Arch, &a.Version, &a.EnrolledAt, &a.LastSeen, &a.Inventory, &a.InventoryAt, &a.Recovery, &a.LocalIPs, &a.RemoteAddr, &a.Hypervisor, &a.MaxRuns, &a.RemovedAt, &a.EnrollLabel}, extra...)
 	err := r.Scan(dest...)
 	return a, err
 }

@@ -123,6 +123,43 @@ func TestAPIManage(t *testing.T) {
 		t.Fatalf("enroll with the code: %v", err)
 	}
 
+	// A single-use code with a label: one agent only, which keeps the label.
+	code, out = apiPost(t, e, op, "/api/v1/agents/enroll-code", `{"ttl_minutes":120,"single_use":true,"label":"itdocs:cust-1:dev-7"}`)
+	json.Unmarshal([]byte(out), &ec)
+	if code != 202 || time.Until(ec.Expires) > 121*time.Minute || time.Until(ec.Expires) < 119*time.Minute || !strings.Contains(out, `"single_use":true`) {
+		t.Fatalf("single-use code: %d %s", code, out)
+	}
+	_, tok1, _, _ := api.DecodeEnrollCode(ec.Code)
+	cfg1, err := agent.Enroll(ctx, e.ts.URL, tok1, e.fp, "test")
+	if err != nil {
+		t.Fatalf("enroll with the single-use code: %v", err)
+	}
+	if _, err := agent.Enroll(ctx, e.ts.URL, tok1, e.fp, "test"); err == nil {
+		t.Error("a single-use code enrolled a second agent")
+	}
+	// The 7-day code stays usable for several agents.
+	if _, err := agent.Enroll(ctx, e.ts.URL, tok, e.fp, "test"); err != nil {
+		t.Errorf("second agent with the reusable code: %v", err)
+	}
+	for _, bad := range []string{`{"ttl_minutes":1}`, `{"ttl_minutes":50000}`, `{"label":"a\nb"}`, `{"label":"` + strings.Repeat("x", 201) + `"}`, `{"single":true}`} {
+		if code, out := apiPost(t, e, op, "/api/v1/agents/enroll-code", bad); code != 400 {
+			t.Errorf("bad code request %s: %d %s", bad, code, out)
+		}
+	}
+	all, _ := e.store.ListAgents(ctx)
+	var labelled int64
+	for _, a := range all {
+		if a.UUID == cfg1.AgentUUID {
+			labelled = a.ID
+		}
+	}
+	if _, out := apiCall(t, e, view, "GET", fmt.Sprintf("/api/v1/agents/%d", labelled)); !strings.Contains(out, `"enroll_label":"itdocs:cust-1:dev-7"`) {
+		t.Errorf("label of the agent: %s", out)
+	}
+	if _, out := apiCall(t, e, view, "GET", "/api/v1/agents"); !strings.Contains(out, `"enroll_label":"itdocs:cust-1:dev-7"`) {
+		t.Errorf("label in the agent list: %s", out)
+	}
+
 	// The disks an agent reported, for image jobs; not in the list.
 	agents, _ := e.store.ListAgents(ctx)
 	var id int64
