@@ -505,7 +505,7 @@ func TestAgentInstaller(t *testing.T) {
 		len(fmt.Sprint(win["sha256"])) != 64 || fmt.Sprint(win["install_args"]) != "[/qn /norestart ENROLLCODE=BZ1-test]" {
 		t.Errorf("windows package: %v", win)
 	}
-	if lin["package_type"] != "deb" || !strings.Contains(fmt.Sprint(lin["post_install"]), "--code BZ1-test") {
+	if lin["package_type"] != "deb" || win["service_name"] != "backupzit-agent" || lin["service_name"] != "backupzit-agent" || !strings.Contains(fmt.Sprint(lin["post_install"]), "--code BZ1-test") {
 		t.Errorf("linux package: %v", lin)
 	}
 	if string(f.uploads["inst1/backupzit-agent-0.48.2-x64.msi"]) != "package backupzit-agent-0.48.2-x64.msi" || f.uploadReqs[0]["platform"] != "windows-x64" {

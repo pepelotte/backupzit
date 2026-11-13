@@ -39,7 +39,14 @@ type agentPackage struct {
 	InstallArgs []string `json:"install_args"`
 	// PostInstall: commands to run after installing a Linux package.
 	PostInstall [][]string `json:"post_install,omitempty"`
+	// ServiceName: the service that must be running after the install
+	// (Windows service and systemd unit share the name).
+	ServiceName string `json:"service_name"`
 }
+
+// agentService is the service name from packaging/windows/agent.wxs and
+// packaging/linux/backupzit-agent.service.
+const agentService = "backupzit-agent"
 
 var pkgVersion = regexp.MustCompile(`backupzit-agent[-_](\d+\.\d+\.\d+)`)
 
@@ -123,7 +130,7 @@ func actAgentInstaller(ctx context.Context, c *connector, cmd Command) (any, err
 		if err != nil {
 			return nil, fmt.Errorf("Hochladen zur Plattform: %w", err)
 		}
-		ap := agentPackage{Platform: f.platform, PackageType: f.kind, StoragePath: path, FileName: name, SHA256: sum, SizeBytes: size}
+		ap := agentPackage{Platform: f.platform, PackageType: f.kind, StoragePath: path, FileName: name, SHA256: sum, SizeBytes: size, ServiceName: agentService}
 		if m := pkgVersion.FindStringSubmatch(name); m != nil {
 			ap.Version = m[1]
 		}

@@ -59,6 +59,7 @@ Nach der Freigabe durch einen Techniker auf dem Mesh-Server stellt die Plattform
 3. meldet pro Paket `sha256`, `size_bytes`, `version`, `package_type` und die Aufrufparameter zurück:
    - **msi:** `msiexec /i <datei> <install_args>`, mit `install_args` = `/qn /norestart ENROLLCODE=BZ1-…`
    - **deb/rpm:** Paket mit dem Paketmanager installieren, danach die Befehle aus `post_install` ausführen (`backupzit-agent enroll --if-not-enrolled --pending-ok --code BZ1-…`, `systemctl restart backupzit-agent`)
+   - **Erfolgskontrolle:** `service_name` (immer `backupzit-agent`, unter Windows der Dienst „BackupZit Agent“, unter Linux die systemd-Unit) muss danach laufen.
 
 Der Code in `install_args` bzw. `post_install` ist ein Geheimnis: nicht protokollieren und nach der Installation löschen.
 
