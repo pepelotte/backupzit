@@ -66,16 +66,19 @@ var actions = map[string]handler{
 	"files.list":        actFilesList,
 	"files.download":    actFilesDownload,
 	"restore.to_folder": actRestoreFolder,
+	// actions_more.go
+	"target.update":          actTargetUpdate,
+	"agent.browse":           actAgentBrowse,
+	"restore.files_original": actRestoreOriginal,
+	"restore.machine":        actRestoreDisks(false),
+	"restore.volumes":        actRestoreDisks(true),
+	"recovery.code":          actRecoveryCode,
+	"recovery.revoke":        actRecoveryRevoke,
 }
 
 // notYet are actions the platform already sends that need more work in
 // BackupZit or the connector.
-var notYet = map[string]string{
-	"agent.browse":           "Ordner auf dem Agenten durchsuchen",
-	"restore.files_original": "Wiederherstellung an den Originalort",
-	"restore.machine":        "Wiederherstellung eines ganzen Rechners",
-	"restore.volumes":        "Wiederherstellung einzelner Volumes",
-}
+var notYet = map[string]string{}
 
 func (c *connector) run(ctx context.Context, cmd Command) (any, error) {
 	if h, ok := actions[cmd.Action]; ok {
@@ -258,13 +261,21 @@ func actAgentLog(ctx context.Context, c *connector, cmd Command) (any, error) {
 
 // ---- jobs
 
+// jobExtras are the parts of a job command that need BackupZit to be
+// asked first: the destination and a disk selection over several disks.
+type jobExtras struct {
+	Destination json.RawMessage
+	ExtDisks    json.RawMessage
+}
+
 // jobBody turns the platform's job parameters into what BackupZit takes:
-// known fields only; wishes BackupZit cannot fulfil yet come back as
-// warnings, or fail the command where ignoring them would be wrong.
-func jobBody(raw json.RawMessage, create bool) (map[string]any, []string, error) {
+// known fields only; the ext wishes BackupZit can fulfil are translated,
+// the others come back as warnings.
+func jobBody(raw json.RawMessage, create bool) (map[string]any, []string, jobExtras, error) {
+	var x jobExtras
 	var p map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return nil, nil, fail("ungültige Parameter: %v", err)
+		return nil, nil, x, fail("ungültige Parameter: %v", err)
 	}
 	var warn []string
 	body := map[string]any{}
@@ -277,48 +288,56 @@ func jobBody(raw json.RawMessage, create bool) (map[string]any, []string, error)
 			body[k] = v
 		}
 	}
-	if d, ok := p["destination"]; ok && string(d) != "null" {
+	if d, ok := p["destination"]; ok && string(d) != "null" && string(d) != "{}" {
 		var dst struct {
 			Type string `json:"type"`
 		}
 		_ = json.Unmarshal(d, &dst)
-		if dst.Type == "local" || dst.Type == "network" {
-			return nil, nil, fail("Lokale und Netzwerk-Ziele werden vom Connector noch nicht angelegt; bitte den Cloud-Speicher des Kunden wählen")
+		switch {
+		case dst.Type != "local" && dst.Type != "network":
+			// The customer's cloud storage (target_id).
+		case create:
+			x.Destination = d
+		default:
+			warn = append(warn, "Das Speicherziel eines Jobs lässt sich nicht ändern; dafür den Job neu anlegen")
 		}
 	}
 	if v, ok := p["encryption_password"]; ok && string(v) != "null" && string(v) != `""` {
-		warn = append(warn, "Ein Kennwort pro Job gibt es in BackupZit nicht: verschlüsselt wird immer mit dem Wiederherstellungsschlüssel des Speichers")
+		warn = append(warn, "Ein Kennwort pro Job gibt es in BackupZit nicht: verschlüsselt wird immer mit dem Wiederherstellungsschlüssel des Kunden")
 	}
 	if v, ok := p["ext_disks"]; ok && string(v) != "null" && string(v) != "[]" {
-		warn = append(warn, "Eine Auswahl von Partitionen über mehrere Platten kann BackupZit noch nicht: es werden alle Platten vollständig gesichert")
+		if create {
+			x.ExtDisks = v
+		} else {
+			warn = append(warn, "Die Datenträgerauswahl eines Jobs lässt sich nicht ändern; dafür den Job neu anlegen")
+		}
 	}
+	var schedule map[string]any
 	if s, ok := p["schedule"]; ok && string(s) != "null" {
-		m, ext, err := withoutExt(s)
+		m, ext, err := splitExt(s)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, x, err
 		}
-		if ext {
-			warn = append(warn, "Erweiterte Zeitplan-Optionen (Monate, Wochentag im Monat, Zeitraum, beim Systemstart, nachholen, Minuten im Zeitfenster) werden noch nicht umgesetzt")
-		}
-		body["schedule"] = m
+		warn = append(warn, mapScheduleExt(m, ext)...)
+		body["schedule"], schedule = m, m
 	}
 	if r, ok := p["retention"]; ok && string(r) != "null" {
-		m, ext, err := withoutExt(r)
+		m, ext, err := splitExt(r)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, x, err
 		}
-		if ext {
-			warn = append(warn, "Bereinigung nach Alter wird noch nicht umgesetzt: es gelten die Anzahlen (keep_last, keep_daily …)")
+		warn = append(warn, mapRetentionExt(m, ext, schedule)...)
+		for k := range m {
+			if k != "keep_last" && k != "keep_daily" && k != "keep_weekly" && k != "keep_monthly" {
+				delete(m, k)
+			}
 		}
 		body["retention"] = m
 	}
 	if o, ok := p["options"]; ok && string(o) != "null" {
-		m, ext, err := withoutExt(o)
+		m, ext, err := splitExt(o)
 		if err != nil {
-			return nil, nil, err
-		}
-		if ext {
-			warn = append(warn, "Leistungsfenster und Erst-Seeding per USB werden noch nicht umgesetzt")
+			return nil, nil, x, err
 		}
 		known := map[string]bool{"compression": true, "rpo_hours": true, "max_hours": true, "limit_mbps": true, "limit_from": true,
 			"limit_to": true, "window": true, "window_from": true, "window_to": true, "pre_command": true, "post_command": true, "command_minutes": true}
@@ -327,46 +346,24 @@ func jobBody(raw json.RawMessage, create bool) (map[string]any, []string, error)
 				delete(m, k)
 			}
 		}
+		warn = append(warn, mapOptionsExt(m, ext)...)
 		body["options"] = m
 	}
-	return body, warn, nil
+	return body, warn, x, nil
 }
 
-// withoutExt decodes an object and removes its "ext" member; ext reports
-// whether that held anything.
-func withoutExt(raw json.RawMessage) (map[string]any, bool, error) {
+// splitExt decodes an object and takes its "ext" member out.
+func splitExt(raw json.RawMessage) (map[string]any, map[string]any, error) {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, false, fail("ungültige Parameter: %v", err)
+		return nil, nil, fail("ungültige Parameter: %v", err)
 	}
-	e, ok := m["ext"]
+	ext, _ := m["ext"].(map[string]any)
 	delete(m, "ext")
-	if !ok || e == nil {
-		return m, false, nil
+	if ext == nil {
+		ext = map[string]any{}
 	}
-	if x, isMap := e.(map[string]any); isMap {
-		for _, v := range x {
-			switch v := v.(type) {
-			case nil:
-			case bool:
-				if v {
-					return m, true, nil
-				}
-			case string:
-				if v != "" {
-					return m, true, nil
-				}
-			case []any:
-				if len(v) > 0 {
-					return m, true, nil
-				}
-			default:
-				return m, true, nil
-			}
-		}
-		return m, false, nil
-	}
-	return m, true, nil
+	return m, ext, nil
 }
 
 func withWarnings(res map[string]any, warn []string) map[string]any {
@@ -380,15 +377,34 @@ func withWarnings(res map[string]any, warn []string) map[string]any {
 }
 
 func actJobCreate(ctx context.Context, c *connector, cmd Command) (any, error) {
-	body, warn, err := jobBody(cmd.Params, true)
+	body, warn, x, err := jobBody(cmd.Params, true)
 	if err != nil {
 		return nil, err
+	}
+	out := map[string]any{}
+	if x.Destination != nil {
+		target, created, w, err := c.destinationTarget(ctx, cmd.CustomerID, x.Destination)
+		if err != nil {
+			return nil, err
+		}
+		warn = append(warn, w...)
+		body["target_id"] = target["id"]
+		out["destination_target"] = target
+		out["destination_created"] = created
+	}
+	if x.ExtDisks != nil {
+		w, err := c.mapExtDisks(ctx, body, x.ExtDisks)
+		if err != nil {
+			return nil, err
+		}
+		warn = append(warn, w...)
 	}
 	var job map[string]any
 	if err := c.bz.call(ctx, http.MethodPost, "/jobs", body, &job); err != nil {
 		return nil, err
 	}
-	return withWarnings(map[string]any{"id": job["id"], "job": job}, warn), nil
+	out["id"], out["job"] = job["id"], job
+	return withWarnings(out, warn), nil
 }
 
 func actJobUpdate(ctx context.Context, c *connector, cmd Command) (any, error) {
@@ -399,7 +415,7 @@ func actJobUpdate(ctx context.Context, c *connector, cmd Command) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	body, warn, err := jobBody(cmd.Params, false)
+	body, warn, _, err := jobBody(cmd.Params, false)
 	if err != nil {
 		return nil, err
 	}

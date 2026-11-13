@@ -19,6 +19,9 @@ import (
 
 const customer = "7f3a9e2b-1c4d-4e5f-8a9b-0c1d2e3f4a5b"
 
+// fakeCode is a BZ1 code as BackupZit makes them (internal/api/enrollcode.go).
+var fakeCode = "BZ1-" + base64.RawURLEncoding.EncodeToString([]byte(`{"s":"https://backup.example:8443","t":"tok-123","f":"SHA256:abc"}`))
+
 // fakes holds the three services the connector talks to.
 type fakes struct {
 	t  *testing.T
@@ -46,6 +49,9 @@ type fakes struct {
 	lastAuthToken string
 	codeRequests  []map[string]any
 	uploadReqs    []map[string]any
+	targetPatches []map[string]any
+	restores      []map[string]any // POST /runs/{id}/restore and restore-disk, with "_path"
+	revokes       []map[string]any
 }
 
 func newFakes(t *testing.T) (*fakes, *connector) {
@@ -165,11 +171,29 @@ func (f *fakes) backupZit(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "S3 access key is required"})
 			return
 		}
-		t := map[string]any{"id": len(f.targets) + 1, "name": b["name"], "kind": "s3",
-			"location": fmt.Sprintf("s3://%s/%s/%s", b["s3_endpoint"], b["s3_bucket"], b["s3_prefix"]), "encrypted": true, "immutable_days": b["s3_lock_days"]}
+		kind, _ := b["kind"].(string)
+		loc := fmt.Sprintf("s3://%s/%s/%s", b["s3_endpoint"], b["s3_bucket"], b["s3_prefix"])
+		switch kind {
+		case "local":
+			loc = fmt.Sprint(b["url"])
+		case "smb":
+			loc = fmt.Sprintf("smb://%s@%s/%s/%s", b["smb_user"], b["smb_host"], b["smb_share"], b["smb_path"])
+		}
+		t := map[string]any{"id": len(f.targets) + 1, "name": b["name"], "kind": kind, "location": loc, "encrypted": true, "immutable_days": b["s3_lock_days"]}
 		f.targets = append(f.targets, t)
-		writeJSON(w, 202, map[string]any{"target": t, "recovery_key": "AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH",
-			"test": map[string]any{"ok": f.testsUntilOK == 0, "message": "test"}})
+		res := map[string]any{"target": t, "recovery_key": "AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH"}
+		if b["recovery_key_from"] != nil {
+			res = map[string]any{"target": t, "recovery_key_from": b["recovery_key_from"]}
+		}
+		if kind != "local" {
+			res["test"] = map[string]any{"ok": f.testsUntilOK == 0 && kind == "s3", "message": "test"}
+		}
+		writeJSON(w, 202, res)
+	case r.Method == "PATCH" && strings.HasPrefix(p, "/targets/"):
+		b := readBody(r)
+		b["_path"] = p
+		f.targetPatches = append(f.targetPatches, b)
+		writeJSON(w, 200, map[string]any{"id": 1})
 	case r.Method == "POST" && strings.HasPrefix(p, "/targets/") && strings.HasSuffix(p, "/test"):
 		if f.testsUntilOK > 0 {
 			f.testsUntilOK--
@@ -177,7 +201,24 @@ func (f *fakes) backupZit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 202, map[string]any{"ok": f.testsUntilOK == 0, "message": "retest"})
 	case r.Method == "POST" && p == "/agents/enroll-code":
 		f.codeRequests = append(f.codeRequests, readBody(r))
-		writeJSON(w, 202, map[string]any{"code": "BZ1-test", "expires": "2026-11-14T10:00:00Z"})
+		writeJSON(w, 202, map[string]any{"code": fakeCode, "expires": "2026-11-14T10:00:00Z"})
+	case r.Method == "POST" && p == "/agents/enroll-codes/revoke":
+		f.revokes = append(f.revokes, readBody(r))
+		writeJSON(w, 202, map[string]any{"revoked": 2})
+	case r.Method == "GET" && p == "/runs/80":
+		writeJSON(w, 200, map[string]any{"id": 80, "kind": "image-backup", "image_disks": []any{
+			map[string]any{"index": 0, "number": 0, "partitions": []any{map[string]any{"number": 1, "included": false},
+				map[string]any{"number": 2, "included": true}, map[string]any{"number": 3, "included": true}}},
+			map[string]any{"index": 1, "number": 1, "partitions": []any{map[string]any{"number": 1, "included": true}}}}})
+	case r.Method == "GET" && p == "/runs/81":
+		writeJSON(w, 200, map[string]any{"id": 81, "kind": "system-backup"})
+	case r.Method == "GET" && p == "/runs/82":
+		writeJSON(w, 200, map[string]any{"id": 82, "kind": "backup"})
+	case r.Method == "POST" && strings.HasPrefix(p, "/runs/") && (strings.HasSuffix(p, "/restore") || strings.HasSuffix(p, "/restore-disk")):
+		b := readBody(r)
+		b["_path"] = p
+		f.restores = append(f.restores, b)
+		writeJSON(w, 202, map[string]any{"run_id": 100 + len(f.restores)})
 	case r.Method == "POST" && p == "/jobs":
 		b := readBody(r)
 		f.jobPosts = append(f.jobPosts, b)
@@ -196,7 +237,11 @@ func (f *fakes) backupZit(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "GET" && p == "/agents":
 		writeJSON(w, 200, []any{map[string]any{"id": 12, "hostname": "PC-01"}})
 	case r.Method == "GET" && p == "/agents/12":
-		writeJSON(w, 200, map[string]any{"id": 12, "hostname": "PC-01", "disks": []any{map[string]any{"number": 0}}})
+		writeJSON(w, 200, map[string]any{"id": 12, "hostname": "PC-01", "os": "windows/amd64", "disks": []any{
+			map[string]any{"number": 0, "partitions": []any{map[string]any{"number": 1, "size": 100},
+				map[string]any{"number": 3, "size": 500, "file_system": "NTFS", "mount_points": []any{"C:\\"}}}},
+			map[string]any{"number": 1, "partitions": []any{map[string]any{"number": 1, "size": 900, "label": "Daten", "mount_points": []any{"D:\\"}}}},
+			map[string]any{"number": 2, "bus": "usb", "partitions": []any{map[string]any{"number": 1, "size": 64, "mount_points": []any{"E:\\"}}}}}})
 	case r.Method == "GET" && p == "/storage":
 		writeJSON(w, 200, []any{map[string]any{"target_id": 1, "used_bytes": 1234}})
 	case r.Method == "GET" && p == "/jobs":
@@ -341,18 +386,15 @@ func TestJobs(t *testing.T) {
 	if _, ok := body["device_id"]; ok {
 		t.Error("device_id passed on")
 	}
-	if s := body["schedule"].(map[string]any); s["ext"] != nil || s["kind"] != "daily" {
+	if s := body["schedule"].(map[string]any); s["ext"] != nil || s["kind"] != "daily" || fmt.Sprint(s["months"]) != "[1]" {
 		t.Errorf("schedule: %v", s)
 	}
 	if o := body["options"].(map[string]any); o["ext"] != nil || o["unknown"] != nil || o["compression"] != "fast" {
 		t.Errorf("options: %v", o)
 	}
 	w := fmt.Sprint(res["result"].(map[string]any)["warnings"])
-	if !strings.Contains(w, "Kennwort") || !strings.Contains(w, "Zeitplan") || !strings.Contains(w, "Alter") {
+	if !strings.Contains(w, "Kennwort") || strings.Contains(w, "Zeitplan") || strings.Contains(w, "Alter") || strings.Contains(w, "Seeding") {
 		t.Errorf("warnings: %s", w)
-	}
-	if strings.Contains(w, "Leistungsfenster") {
-		t.Errorf("empty ext warned: %s", w)
 	}
 
 	// Update: only changeable fields go through.
@@ -365,10 +407,10 @@ func TestJobs(t *testing.T) {
 		t.Errorf("patch: %v", p)
 	}
 
-	// Local and network destinations are not made yet.
+	// A network destination needs the customer's cloud storage first.
 	id = f.enqueue("job.create", map[string]any{"name": "x", "kind": "files", "destination": map[string]any{"type": "network", "path": `\\nas\b`}})
 	process(t, c)
-	if res := f.result(id); res["status"] != "failed" || !strings.Contains(fmt.Sprint(res["error"]), "Netzwerk") || len(f.jobPosts) != 1 {
+	if res := f.result(id); res["status"] != "failed" || !strings.Contains(fmt.Sprint(res["error"]), "Cloud-Speicher") || len(f.jobPosts) != 1 {
 		t.Errorf("network destination: %v", res)
 	}
 	id = f.enqueue("job.run", map[string]any{"job_id": 9})
@@ -403,7 +445,7 @@ func TestDownloadAndOthers(t *testing.T) {
 	if res := f.result(id); res["status"] != "failed" || !strings.Contains(fmt.Sprint(res["error"]), "not in the backup") {
 		t.Errorf("missing file: %v", res)
 	}
-	for action, want := range map[string]string{"restore.machine": "noch nicht umgesetzt", "delete.everything": "unbekannte Auftragsart"} {
+	for action, want := range map[string]string{"restore.machine": "run_id fehlt", "delete.everything": "unbekannte Auftragsart"} {
 		id = f.enqueue(action, map[string]any{})
 		process(t, c)
 		if res := f.result(id); res["status"] != "failed" || !strings.Contains(fmt.Sprint(res["error"]), want) {
@@ -502,10 +544,10 @@ func TestAgentInstaller(t *testing.T) {
 	pk := res["result"].(map[string]any)["packages"].([]any)
 	win, lin := pk[0].(map[string]any), pk[1].(map[string]any)
 	if win["platform"] != "windows-x64" || win["package_type"] != "msi" || win["version"] != "0.48.2" || win["size_bytes"] != float64(len("package backupzit-agent-0.48.2-x64.msi")) ||
-		len(fmt.Sprint(win["sha256"])) != 64 || fmt.Sprint(win["install_args"]) != "[/qn /norestart ENROLLCODE=BZ1-test]" {
+		len(fmt.Sprint(win["sha256"])) != 64 || fmt.Sprint(win["install_args"]) != "[/qn /norestart ENROLLCODE="+fakeCode+"]" {
 		t.Errorf("windows package: %v", win)
 	}
-	if lin["package_type"] != "deb" || win["service_name"] != "backupzit-agent" || lin["service_name"] != "backupzit-agent" || !strings.Contains(fmt.Sprint(lin["post_install"]), "--code BZ1-test") {
+	if lin["package_type"] != "deb" || win["service_name"] != "backupzit-agent" || lin["service_name"] != "backupzit-agent" || !strings.Contains(fmt.Sprint(lin["post_install"]), "--code "+fakeCode) {
 		t.Errorf("linux package: %v", lin)
 	}
 	if string(f.uploads["inst1/backupzit-agent-0.48.2-x64.msi"]) != "package backupzit-agent-0.48.2-x64.msi" || f.uploadReqs[0]["platform"] != "windows-x64" {

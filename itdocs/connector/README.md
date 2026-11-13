@@ -45,11 +45,14 @@ Der Kundenschlüssel bleibt in BackupZit und geht nicht an die Plattform. Die Pl
 
 ## Auftragsarten
 
-`target.provision`, `target.create`, `target.test`, `agent.enroll_code`, `agent.installer`, `agent.log`, `job.create`, `job.update`, `job.delete`, `job.run`, `job.restore_test`, `job.enable`, `job.disable`, `run.cancel`, `files.list`, `files.download`, `restore.to_folder`.
+`target.provision`, `target.create`, `target.test`, `target.update`, `agent.enroll_code`, `agent.installer`, `agent.log`, `agent.browse`, `job.create`, `job.update`, `job.delete`, `job.run`, `job.restore_test`, `job.enable`, `job.disable`, `run.cancel`, `files.list`, `files.download`, `restore.to_folder`, `restore.files_original`, `restore.machine`, `restore.volumes`, `recovery.code`, `recovery.revoke`.
 
-Angenommen, aber noch abgelehnt mit verständlicher Meldung: `agent.browse`, `restore.files_original`, `restore.machine`, `restore.volumes`.
-
-Funktionen, die BackupZit noch nicht kann, etwa erweiterte Zeitpläne, Aufbewahrung nach Alter oder ein Kennwort pro Job, werden bei `job.create` und `job.update` ignoriert. Sie kommen als `warnings` im Ergebnis zurück. Lokale und Netzwerkziele lehnt der Connector ab.
+- **Lokale und Netzwerkziele** (`destination` bei `job.create`): Der Connector legt ein BackupZit-Ziel an, verschlüsselt mit dem Wiederherstellungsschlüssel des Cloud-Speichers des Kunden (`recovery_key_from`). Der Cloud-Speicher muss also zuerst bestehen. Derselbe Pfad wird wiederverwendet; bei einer Freigabe wird dabei das übergebene Kennwort gespeichert. Das Ziel steht als `destination_target` im Ergebnis.
+- **`ext`-Felder**: Monate, Zeitraum, Wochentag im Monat, Zeitfenster mit Minuten und „Stunden seit der letzten Sicherung“ werden zu BackupZit-Zeitplänen. Aufbewahrung nach Alter wird in Anzahlen umgerechnet (z. B. 90 Tage → 90 tägliche). Gesperrte und gedrosselte Stunden des Leistungsfensters werden zu Sicherungsfenster und Bandbreitengrenze, wenn sie für alle Tage gleich und zusammenhängend sind. Was BackupZit nicht kann, kommt als `warnings` zurück.
+- **`ext_disks`**: eine Platte → diese Platte (ganz oder Partitionen); mehrere → „alle internen Datenträger“.
+- **`agent.browse`**: nur die Laufwerke aus dem Datenträgerbericht des Agenten; Ordner darunter kann BackupZit nicht auflisten.
+- **`restore.machine` / `restore.volumes`**: je Zuordnung eine Wiederherstellung auf eine ganze Platte (`POST /runs/{id}/restore-disk`, Bestätigung des Löschens durch die Plattform). Einzelne Volumes ohne den Rest der Platte gehen nicht.
+- **`recovery.code`**: `recovery.json` für den Wiederherstellungsstick, standardmäßig 24 Stunden gültig, für mehrere Starts; `recovery.revoke` widerruft die Codes des Kunden (oder eines Geräts).
 
 ## Agent-Installation (`agent.installer`)
 
