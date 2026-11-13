@@ -219,37 +219,33 @@ func mapRetentionExt(m, ext, schedule map[string]any) []string {
 	if !ok || age <= 0 {
 		return append(warn, "Die Aufbewahrung nach Alter hat keine Dauer und wurde nicht übernommen")
 	}
-	n := int(math.Ceil(age))
 	unit, _ := ext["unit"].(string)
-	set := func(field string, v int, text string) {
-		for _, k := range []string{"keep_last", "keep_daily", "keep_weekly", "keep_monthly"} {
-			delete(m, k)
-		}
-		m[field] = min(v, 999)
-		warn = append(warn, text)
+	days, ok := map[string]float64{"hours": age / 24, "days": age, "weeks": age * 7, "months": age * 30, "years": age * 365}[unit]
+	if !ok {
+		return append(warn, fmt.Sprintf("Unbekannte Einheit %q der Aufbewahrung nach Alter; es gelten die Anzahlen", unit))
 	}
-	switch unit {
-	case "hours":
-		if r := runsPerHour(schedule); r > 0 {
-			k := max(int(math.Ceil(age*r)), 1)
-			set("keep_last", k, fmt.Sprintf("Aufbewahrung %d Stunden umgesetzt als die letzten %d Sicherungen (nach dem Zeitplan)", n, k))
-		} else {
-			d := int(math.Ceil(age / 24))
-			set("keep_daily", d, fmt.Sprintf("Aufbewahrung %d Stunden umgesetzt als %d tägliche Sicherungen", n, d))
-		}
-	case "days":
-		set("keep_daily", n, fmt.Sprintf("Aufbewahrung %d Tage umgesetzt als %d tägliche Sicherungen: je Tag mit Sicherung bleibt die neueste", n, n))
-	case "weeks":
-		set("keep_weekly", n, fmt.Sprintf("Aufbewahrung %d Wochen umgesetzt als %d wöchentliche Sicherungen", n, n))
-	case "months":
-		set("keep_monthly", n, fmt.Sprintf("Aufbewahrung %d Monate umgesetzt als %d monatliche Sicherungen", n, n))
-	case "years":
-		set("keep_monthly", n*12, fmt.Sprintf("Aufbewahrung %d Jahre umgesetzt als %d monatliche Sicherungen", n, min(n*12, 999)))
-	default:
-		warn = append(warn, fmt.Sprintf("Unbekannte Einheit %q der Aufbewahrung nach Alter; es gelten die Anzahlen", unit))
+	for _, k := range []string{"keep_last", "keep_daily", "keep_weekly", "keep_monthly"} {
+		delete(m, k)
 	}
-	return warn
+	// Every day of the period keeps its newest backup; when the schedule
+	// runs several times a day, all backups of the period are kept too.
+	d := int(math.Ceil(days))
+	m["keep_daily"] = min(d, 999)
+	text := fmt.Sprintf("Aufbewahrung %g %s umgesetzt: je Tag die neueste Sicherung der letzten %d Tage", age, unitName[unit], min(d, 999))
+	if d > 999 {
+		m["keep_monthly"] = int(math.Ceil(days / 30))
+		text += fmt.Sprintf(", darüber hinaus je Monat eine (%d Monate)", m["keep_monthly"])
+	}
+	if r := runsPerHour(schedule); r > 0 {
+		if k := int(math.Ceil(days*24*r - 1e-9)); k > d {
+			m["keep_last"] = min(k, 999)
+			text += fmt.Sprintf(", dazu alle Sicherungen des Zeitraums (laut Zeitplan %d)", min(k, 999))
+		}
+	}
+	return append(warn, text)
 }
+
+var unitName = map[string]string{"hours": "Stunden", "days": "Tage", "weeks": "Wochen", "months": "Monate", "years": "Jahre"}
 
 // hourRange returns the hours (0..23) as one range from-to (to exclusive,
 // may wrap past midnight); ok is false when they are not contiguous.

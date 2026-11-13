@@ -48,7 +48,7 @@ func TestJobExtMapping(t *testing.T) {
 		t.Errorf("options: %v", o)
 	}
 	w := fmt.Sprint(res["result"].(map[string]any)["warnings"])
-	for _, want := range []string{"Systemstart", "Ruhezustand", "nach der neuen Sicherung", "90 tägliche", "Seeding", "CPU", "06–22"} {
+	for _, want := range []string{"Systemstart", "Ruhezustand", "nach der neuen Sicherung", "letzten 90 Tage", "Seeding", "CPU", "06–22"} {
 		if !strings.Contains(w, want) {
 			t.Errorf("warning %q missing: %s", want, w)
 		}
@@ -67,7 +67,7 @@ func TestJobExtMapping(t *testing.T) {
 		t.Errorf("interval: %v", s)
 	}
 	// 10 runs a day (08:30 … 17:30) over 48 hours.
-	if r := p["retention"].(map[string]any); r["keep_last"] != float64(20) {
+	if r := p["retention"].(map[string]any); r["keep_last"] != float64(20) || r["keep_daily"] != float64(2) {
 		t.Errorf("hours: %v", r)
 	}
 	if w := fmt.Sprint(f.result(id)["result"].(map[string]any)["warnings"]); !strings.Contains(w, "holt verpasste") {
@@ -118,12 +118,23 @@ func TestHelpers(t *testing.T) {
 		t.Errorf("runs per hour: %v", r)
 	}
 	m := map[string]any{"keep_last": 5}
-	if w := mapRetentionExt(m, map[string]any{"mode": "age", "max_age": 2, "unit": "years"}, nil); m["keep_monthly"] != 24 || m["keep_last"] != nil || len(w) != 1 {
+	if w := mapRetentionExt(m, map[string]any{"mode": "age", "max_age": 2, "unit": "years"}, nil); m["keep_daily"] != 730 || m["keep_monthly"] != nil || m["keep_last"] != nil || len(w) != 1 {
 		t.Errorf("years: %v %v", m, w)
 	}
 	m = map[string]any{}
 	if w := mapRetentionExt(m, map[string]any{"mode": "age", "max_age": 36, "unit": "hours"}, nil); m["keep_daily"] != 2 || len(w) != 1 {
 		t.Errorf("hours without schedule: %v %v", m, w)
+	}
+	// Two months of a backup every 4 hours: 360 backups, 60 days.
+	m = map[string]any{}
+	mapRetentionExt(m, map[string]any{"mode": "age", "max_age": 2, "unit": "months"}, map[string]any{"kind": "interval", "every_minutes": float64(240)})
+	if m["keep_last"] != 360 || m["keep_daily"] != 60 {
+		t.Errorf("two months: %v", m)
+	}
+	m = map[string]any{}
+	mapRetentionExt(m, map[string]any{"mode": "age", "max_age": 5, "unit": "years"}, nil)
+	if m["keep_daily"] != 999 || m["keep_monthly"] != 61 {
+		t.Errorf("five years: %v", m)
 	}
 	// Different days cannot become one window.
 	o := map[string]any{}
