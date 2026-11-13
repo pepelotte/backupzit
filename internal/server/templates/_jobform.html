@@ -20,8 +20,10 @@
           {{if or (not .Edit) (eq .J.Kind "copy")}}<option value="after" {{if not .Edit}}data-jobkind-opt="copy"{{end}} {{if eq .S.Kind "after"}}selected{{end}}>{{T "After each backup of the source job"}}</option>{{end}}
           {{if .ChainJobs}}<option value="chain" {{if eq .S.Kind "chain"}}selected{{end}}>{{T "After another job"}}</option>{{end}}
           <option value="manual" {{if eq .S.Kind "manual"}}selected{{end}}>{{T "Manually only"}}</option>
+          {{if eq .S.Kind "since_last"}}<option value="since_last" selected>{{schedule .J.Schedule}}</option>{{end}}
         </select>
       </label>
+      {{if eq .S.Kind "since_last"}}<input type="hidden" name="sched_every_hours" value="{{.S.EveryHours}}">{{end}}
       {{if .ChainJobs}}<div data-sched="chain" {{if ne .S.Kind "chain"}}hidden{{end}} class="row">
         <label>{{T "Start after the job"}} <small>{{T "e.g. first the database, then the file server"}}</small>{{$a := .S.AfterJob}}
           <select name="sched_after_job">{{range .ChainJobs}}<option value="{{.ID}}" {{if eq .ID $a}}selected{{end}}>{{.Name}} ({{.Hostname}})</option>{{end}}</select></label>

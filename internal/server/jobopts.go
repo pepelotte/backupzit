@@ -211,11 +211,15 @@ type jobForm struct {
 	ChainJobs []Job
 }
 
+// defaultRetention is what a new job keeps unless told otherwise (the job
+// form and POST /api/v1/jobs).
+var defaultRetention = repo.RetentionPolicy{KeepLast: 3, KeepDaily: 7, KeepWeekly: 4, KeepMonthly: 6}
+
 // newJobForm prepares the form for job j (a new job: defaults).
 func newJobForm(j Job, edit, canCommands bool) jobForm {
 	f := jobForm{J: j, Edit: edit, CanCommands: canCommands, Days: map[int]bool{}, From: 8, To: 18, MonthTime: "22:00", LimitFrom: 8, LimitTo: 18}
 	if !edit {
-		f.J.Retention = repo.RetentionPolicy{KeepLast: 3, KeepDaily: 7, KeepWeekly: 4, KeepMonthly: 6}
+		f.J.Retention = defaultRetention
 		f.S = Schedule{Kind: SchedDaily, Times: []string{"22:00"}, EveryMinutes: 240, DayOfMonth: 1}
 	} else if sc, err := ParseSchedule(j.Schedule); err == nil {
 		f.S = sc
@@ -374,7 +378,7 @@ func (s *Server) handleJobEdit(w http.ResponseWriter, r *http.Request, _ string)
 		return
 	}
 	j := old
-	j.Name, j.Schedule, j.Retention = r.FormValue("name"), sched, retentionFromForm(r)
+	j.Name, j.Schedule, j.Retention = r.FormValue("name"), keepAPIScheduleFields(old.Schedule, sched), retentionFromForm(r)
 	j.Options = optionsFromForm(r, old.Options, canCommands(r))
 	switch old.Kind {
 	case JobFiles:

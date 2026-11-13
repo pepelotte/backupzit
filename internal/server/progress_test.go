@@ -44,10 +44,20 @@ func TestRunProgress(t *testing.T) {
 		}
 	}
 
+	// The REST API carries it too.
+	tok := apiToken(t, x.admin, "viewer")
+	code, out := apiSend(t, x.e, tok, "GET", fmt.Sprint("/api/v1/runs/", runID), "")
+	if code != 200 || !strings.Contains(out, `"progress":{"bytes_done":419430400,"bytes_total":1048576000,"percent":40,`) {
+		t.Fatalf("api: %d %s", code, out)
+	}
+
 	// File backup: estimated from the 10 files of the previous backup.
 	poll(api.RunProgress{Done: 1 << 20, Files: 4})
 	if b := page("/runs"); !strings.Contains(b, `value="40"`) || !strings.Contains(b, "<b>≈40%</b>") || !strings.Contains(b, "4 files") {
 		t.Fatal("no estimated progress")
+	}
+	if code, out := apiSend(t, x.e, tok, "GET", "/api/v1/runs?status=running", ""); code != 200 || !strings.Contains(out, `"files_done":4,"percent":40,"estimated":true`) {
+		t.Fatalf("api estimate: %d %s", code, out)
 	}
 	// More files than last time: no percentage, only the counts.
 	poll(api.RunProgress{Done: 2 << 20, Files: 25})

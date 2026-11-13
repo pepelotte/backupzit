@@ -292,11 +292,44 @@ func scheduleFromForm(r *http.Request) (string, error) {
 	case SchedChain:
 		sc.AfterJob, _ = strconv.ParseInt(r.FormValue("sched_after_job"), 10, 64)
 		sc.AfterAny = r.FormValue("sched_after_any") == "on"
+	case SchedSinceLast: // set through the API; the form keeps it
+		sc.EveryHours, _ = strconv.Atoi(r.FormValue("sched_every_hours"))
+		sc.Days = nil
 	}
 	if err := sc.Validate(); err != nil {
 		return "", err
 	}
 	return sc.Encode(), nil
+}
+
+// keepAPIScheduleFields carries the schedule fields that only the API sets
+// (months, period, week of the month, a window with minutes, the days of a
+// since_last schedule) from the old schedule to the one posted by the
+// console's form, as long as the form left the parts it shows unchanged.
+func keepAPIScheduleFields(oldStored, newStored string) string {
+	o, err1 := ParseSchedule(oldStored)
+	n, err2 := ParseSchedule(newStored)
+	if err1 != nil || err2 != nil || o.Kind != n.Kind || o.cron != "" || n.cron != "" {
+		return newStored
+	}
+	n.Months, n.ValidFrom, n.ValidUntil = o.Months, o.ValidFrom, o.ValidUntil
+	switch n.Kind {
+	case SchedMonthly:
+		// The form shows day 1 for a schedule on a weekday.
+		if o.Week != 0 && n.DayOfMonth == 1 {
+			n.Week, n.Weekday, n.DayOfMonth = o.Week, o.Weekday, 0
+		}
+	case SchedInterval:
+		if o.FromTime != "" && n.FromHour == o.FromHour && n.ToHour == o.ToHour && n.EveryMinutes == o.EveryMinutes {
+			n.FromTime, n.ToTime = o.FromTime, o.ToTime
+		}
+	case SchedSinceLast:
+		n.Days = o.Days
+	}
+	if n.Validate() != nil {
+		return newStored
+	}
+	return n.Encode()
 }
 
 // fileExists reports whether the embedded templates hold a file.
@@ -836,82 +869,147 @@ func (s *Server) handleTargets(w http.ResponseWriter, r *http.Request, user stri
 		Data: map[string]any{"Targets": targets, "Usage": usage}})
 }
 
-func (s *Server) handleTargetCreate(w http.ResponseWriter, r *http.Request, _ string) {
-	t := Target{
-		Name:         r.FormValue("name"),
-		Kind:         r.FormValue("kind"),
-		URL:          r.FormValue("url"),
-		SFTPPassword: r.FormValue("sftp_password"),
-		SFTPKey:      strings.TrimSpace(r.FormValue("sftp_key")),
-		SFTPHostKey:  r.FormValue("sftp_host_key"),
-		Encrypted:    r.FormValue("encrypted") == "on",
+// targetInput holds what is needed to create a storage target. The form on
+// the Storage page and POST /api/v1/targets both fill it, so both create
+// targets the same way.
+type targetInput struct {
+	Name         string `json:"name"`
+	Kind         string `json:"kind"`
+	URL          string `json:"url"` // local and sftp
+	Encrypted    bool   `json:"-"`
+	RecoveryKey  string `json:"recovery_key"`
+	SFTPPassword string `json:"sftp_password"`
+	SFTPKey      string `json:"sftp_key"`
+	SFTPHostKey  string `json:"sftp_host_key"`
+
+	S3Endpoint  string `json:"s3_endpoint"`
+	S3Bucket    string `json:"s3_bucket"`
+	S3Prefix    string `json:"s3_prefix"`
+	S3HTTP      bool   `json:"s3_http"`
+	S3Region    string `json:"s3_region"`
+	S3AccessKey string `json:"s3_access_key"`
+	S3SecretKey string `json:"s3_secret_key"`
+	S3Immutable bool   `json:"-"`
+	S3LockDays  int    `json:"s3_lock_days"`
+
+	USBLabel string `json:"usb_label"`
+	USBPath  string `json:"usb_path"`
+
+	AzureAccount   string `json:"azure_account"`
+	AzureContainer string `json:"azure_container"`
+	AzurePath      string `json:"azure_path"`
+	AzureEndpoint  string `json:"azure_endpoint"`
+	AzureAuth      string `json:"azure_auth"` // "key" (default) or "sas"
+	AzureSecret    string `json:"azure_secret"`
+
+	HardenedHost        string `json:"hardened_host"`
+	HardenedPath        string `json:"hardened_path"`
+	HardenedKey         string `json:"hardened_key"`
+	HardenedFingerprint string `json:"hardened_fingerprint"`
+
+	SMBHost     string `json:"smb_host"`
+	SMBShare    string `json:"smb_share"`
+	SMBPath     string `json:"smb_path"`
+	SMBUser     string `json:"smb_user"`
+	SMBPassword string `json:"smb_password"`
+	SMBDomain   string `json:"smb_domain"`
+}
+
+func targetInputFromForm(r *http.Request) targetInput {
+	return targetInput{
+		Name: r.FormValue("name"), Kind: r.FormValue("kind"), URL: r.FormValue("url"),
+		Encrypted: r.FormValue("encrypted") == "on", RecoveryKey: r.FormValue("recovery_key"),
+		SFTPPassword: r.FormValue("sftp_password"), SFTPKey: r.FormValue("sftp_key"), SFTPHostKey: r.FormValue("sftp_host_key"),
+		S3Endpoint: r.FormValue("s3_endpoint"), S3Bucket: r.FormValue("s3_bucket"), S3Prefix: r.FormValue("s3_prefix"),
+		S3HTTP: r.FormValue("s3_http") == "on", S3Region: r.FormValue("s3_region"),
+		S3AccessKey: r.FormValue("s3_access_key"), S3SecretKey: r.FormValue("s3_secret_key"),
+		S3Immutable: r.FormValue("s3_immutable") == "on", S3LockDays: atoiDefault(r.FormValue("s3_lock_days")),
+		USBLabel: r.FormValue("usb_label"), USBPath: r.FormValue("usb_path"),
+		AzureAccount: r.FormValue("azure_account"), AzureContainer: r.FormValue("azure_container"), AzurePath: r.FormValue("azure_path"),
+		AzureEndpoint: r.FormValue("azure_endpoint"), AzureAuth: r.FormValue("azure_auth"), AzureSecret: r.FormValue("azure_secret"),
+		HardenedHost: r.FormValue("hardened_host"), HardenedPath: r.FormValue("hardened_path"),
+		HardenedKey: r.FormValue("hardened_key"), HardenedFingerprint: r.FormValue("hardened_fingerprint"),
+		SMBHost: r.FormValue("smb_host"), SMBShare: r.FormValue("smb_share"), SMBPath: r.FormValue("smb_path"),
+		SMBUser: r.FormValue("smb_user"), SMBPassword: r.FormValue("smb_password"), SMBDomain: r.FormValue("smb_domain"),
 	}
-	if t.Kind == "s3" {
-		u, err := s3Location(r.FormValue("s3_endpoint"), r.FormValue("s3_bucket"), r.FormValue("s3_prefix"), r.FormValue("s3_http") == "on")
+}
+
+// target checks the input and builds the target to store.
+func (in targetInput) target() (Target, error) {
+	t := Target{
+		Name:         in.Name,
+		Kind:         in.Kind,
+		URL:          in.URL,
+		SFTPPassword: in.SFTPPassword,
+		SFTPKey:      strings.TrimSpace(in.SFTPKey),
+		SFTPHostKey:  in.SFTPHostKey,
+		Encrypted:    in.Encrypted,
+	}
+	switch t.Kind {
+	case "s3":
+		u, err := s3Location(in.S3Endpoint, in.S3Bucket, in.S3Prefix, in.S3HTTP)
 		if err != nil {
-			redirectErr(w, r, "/targets", err)
-			return
+			return t, err
 		}
 		t.URL = u
-		t.S3AccessKey = r.FormValue("s3_access_key")
-		t.S3SecretKey = r.FormValue("s3_secret_key")
-		t.S3Region = r.FormValue("s3_region")
-		if r.FormValue("s3_immutable") == "on" {
-			t.S3LockDays = atoiDefault(r.FormValue("s3_lock_days"))
+		t.S3AccessKey = in.S3AccessKey
+		t.S3SecretKey = in.S3SecretKey
+		t.S3Region = in.S3Region
+		if in.S3Immutable {
+			t.S3LockDays = in.S3LockDays
 			if t.S3LockDays < 1 || t.S3LockDays > 3650 {
-				redirectErr(w, r, "/targets", errors.New("immutability period must be 1 to 3650 days"))
-				return
+				return t, errors.New("immutability period must be 1 to 3650 days")
 			}
 		}
-	}
-	if t.Kind == "usb" {
-		u, err := usbLocation(r.FormValue("usb_label"), r.FormValue("usb_path"))
+	case "usb":
+		u, err := usbLocation(in.USBLabel, in.USBPath)
 		if err != nil {
-			redirectErr(w, r, "/targets", err)
-			return
+			return t, err
 		}
 		t.URL = u
-	}
-	if t.Kind == "azure" {
-		u, err := azureLocation(r.FormValue("azure_account"), r.FormValue("azure_container"), r.FormValue("azure_path"), r.FormValue("azure_endpoint"))
+	case "azure":
+		u, err := azureLocation(in.AzureAccount, in.AzureContainer, in.AzurePath, in.AzureEndpoint)
 		if err != nil {
-			redirectErr(w, r, "/targets", err)
-			return
+			return t, err
 		}
 		t.URL = u
-		if r.FormValue("azure_auth") == "sas" {
-			t.AzureSAS = strings.TrimPrefix(strings.TrimSpace(r.FormValue("azure_secret")), "?")
+		if in.AzureAuth == "sas" {
+			t.AzureSAS = strings.TrimPrefix(strings.TrimSpace(in.AzureSecret), "?")
 		} else {
-			t.AzureKey = strings.TrimSpace(r.FormValue("azure_secret"))
+			t.AzureKey = strings.TrimSpace(in.AzureSecret)
 		}
-	}
-	if t.Kind == "hardened" {
-		u, err := hardenedLocation(r.FormValue("hardened_host"), r.FormValue("hardened_path"))
+	case "hardened":
+		u, err := hardenedLocation(in.HardenedHost, in.HardenedPath)
 		if err != nil {
-			redirectErr(w, r, "/targets", err)
-			return
+			return t, err
 		}
 		t.URL = u
-		t.HardenedKey = strings.TrimSpace(r.FormValue("hardened_key"))
-		t.HardenedFingerprint = strings.TrimSpace(r.FormValue("hardened_fingerprint"))
-	}
-	if t.Kind == "smb" {
-		u, err := smbLocation(r.FormValue("smb_host"), r.FormValue("smb_share"), r.FormValue("smb_path"), r.FormValue("smb_user"))
+		t.HardenedKey = strings.TrimSpace(in.HardenedKey)
+		t.HardenedFingerprint = strings.TrimSpace(in.HardenedFingerprint)
+	case "smb":
+		u, err := smbLocation(in.SMBHost, in.SMBShare, in.SMBPath, in.SMBUser)
 		if err != nil {
-			redirectErr(w, r, "/targets", err)
-			return
+			return t, err
 		}
 		t.URL = u
-		t.SMBPassword = r.FormValue("smb_password")
-		t.SMBDomain = r.FormValue("smb_domain")
+		t.SMBPassword = in.SMBPassword
+		t.SMBDomain = in.SMBDomain
 	}
-	if k := r.FormValue("recovery_key"); t.Encrypted && strings.TrimSpace(k) != "" {
+	if k := in.RecoveryKey; t.Encrypted && strings.TrimSpace(k) != "" {
 		key, err := parseRecoveryKey(k)
 		if err != nil {
-			redirectErr(w, r, "/targets", err)
-			return
+			return t, err
 		}
 		t.RecoveryKey = key
+	}
+	return t, nil
+}
+
+func (s *Server) handleTargetCreate(w http.ResponseWriter, r *http.Request, _ string) {
+	t, err := targetInputFromForm(r).target()
+	if err != nil {
+		redirectErr(w, r, "/targets", err)
+		return
 	}
 	id, err := s.store.CreateTarget(r.Context(), t)
 	if err != nil {

@@ -71,6 +71,12 @@ func snapshotComps(p string) []string {
 	return out
 }
 
+// notInBackupError is a path that a snapshot does not hold (or that is not
+// a folder where one is needed).
+type notInBackupError string
+
+func (e notInBackupError) Error() string { return string(e) }
+
 // lookupNode finds the node at comps below the root tree (nil node = the
 // root itself).
 func lookupNode(ctx context.Context, r *repo.Repository, root repo.ID, comps []string) (*repo.Tree, *repo.Node, error) {
@@ -82,13 +88,13 @@ func lookupNode(ctx context.Context, r *repo.Repository, root repo.ID, comps []s
 	for i, c := range comps {
 		n = t.Find(c)
 		if n == nil {
-			return nil, nil, fmt.Errorf("%s is not in the backup", strings.Join(comps[:i+1], "/"))
+			return nil, nil, notInBackupError(strings.Join(comps[:i+1], "/") + " is not in the backup")
 		}
 		if i == len(comps)-1 {
 			break
 		}
 		if n.Type != repo.NodeDir || n.Subtree == nil {
-			return nil, nil, fmt.Errorf("%s is not a folder", strings.Join(comps[:i+1], "/"))
+			return nil, nil, notInBackupError(strings.Join(comps[:i+1], "/") + " is not a folder")
 		}
 		if t, err = r.LoadTree(ctx, *n.Subtree); err != nil {
 			return nil, nil, err
@@ -106,7 +112,7 @@ func listDir(ctx context.Context, r *repo.Repository, sn *repo.Snapshot, p strin
 	}
 	if n != nil {
 		if n.Type != repo.NodeDir || n.Subtree == nil {
-			return nil, fmt.Errorf("%s is not a folder", p)
+			return nil, notInBackupError(p + " is not a folder")
 		}
 		if t, err = r.LoadTree(ctx, *n.Subtree); err != nil {
 			return nil, err
@@ -214,10 +220,19 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request, user
 		redirectErr(w, r, fileBack(run, dir), errors.New("tick the files and folders to download"))
 		return
 	}
+	if err := s.downloadFiles(w, r, run, sel); err != nil {
+		redirectErr(w, r, fileBack(run, dir), err)
+	}
+}
+
+// downloadFiles streams entries of a file backup: one file as is, several
+// or folders as a ZIP archive. An error is returned only while nothing has
+// been written yet, so the caller can still report it; the console page
+// and POST /api/v1/runs/{id}/files/download both use it.
+func (s *Server) downloadFiles(w http.ResponseWriter, r *http.Request, run Run, sel []string) error {
 	repoR, sn, err := s.fileSnapshot(r.Context(), run)
 	if err != nil {
-		redirectErr(w, r, fileBack(run, dir), err)
-		return
+		return err
 	}
 	ctx := context.WithoutCancel(r.Context())
 	s.audit(r, "restore.download", "%d paths from backup #%d", len(sel), run.ID)
@@ -237,16 +252,14 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request, user
 	// show as a message, not as an empty archive.
 	for _, sp := range sel {
 		if _, _, err := lookupNode(ctx, repoR, sn.Tree, snapshotComps(sp)); err != nil {
-			redirectErr(w, r, fileBack(run, dir), err)
-			return
+			return err
 		}
 	}
 	if len(sel) == 1 {
 		if _, n, err := lookupNode(ctx, repoR, sn.Tree, snapshotComps(sel[0])); err == nil && n != nil && n.Type == repo.NodeSymlink {
 			name := n.Name
 			if n, err = followLink(ctx, repoR, sn.Tree, snapshotComps(sel[0]), n); err != nil {
-				redirectErr(w, r, fileBack(run, dir), err)
-				return
+				return err
 			}
 			if n.Type == repo.NodeFile {
 				cp := *n
@@ -255,7 +268,7 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request, user
 				w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(cp.Name))
 				w.Header().Set("Content-Length", strconv.FormatUint(cp.Size, 10))
 				_ = writeFile(w, &cp)
-				return
+				return nil
 			}
 		}
 		if _, n, err := lookupNode(ctx, repoR, sn.Tree, snapshotComps(sel[0])); err == nil && n != nil && n.Type == repo.NodeFile {
@@ -263,7 +276,7 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request, user
 			w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(n.Name))
 			w.Header().Set("Content-Length", strconv.FormatUint(n.Size, 10))
 			_ = writeFile(w, n)
-			return
+			return nil
 		}
 	}
 	name := fmt.Sprintf("backup%d-%s.zip", run.ID, time.Now().Format("20060102-1504"))
@@ -318,9 +331,10 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request, user
 			continue
 		}
 		if add(n.Name, snapshotComps(sp), n) != nil {
-			return
+			return nil // the archive is cut; the browser shows a failed download
 		}
 	}
+	return nil
 }
 
 // handleFilePickRestore restores the ticked entries on an agent, into a

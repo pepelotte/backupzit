@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/max-zit/backupzit/internal/repo"
 )
 
 // REST API for scripts, RMM and monitoring tools:
@@ -133,29 +134,39 @@ func apiErr(code int, format string, a ...any) error {
 	return apiError{code, fmt.Sprintf(format, a...)}
 }
 
+// apiAuth authenticates a token and checks perm. On failure it has
+// written the JSON error and returns false; on success the request carries
+// the token's user.
+func (s *Server) apiAuth(perm Perm, w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+	w.Header().Set("Cache-Control", "no-store")
+	if wait := s.guard.Blocked(r, ""); wait > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many failed sign-ins from this address"})
+		return r, false
+	}
+	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	u, who, err := s.store.tokenUser(r.Context(), strings.TrimSpace(token))
+	if err != nil {
+		s.guard.Fail(r, "", "API token sign-ins")
+		time.Sleep(300 * time.Millisecond)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing, invalid or expired API token"})
+		return r, false
+	}
+	if !u.Can(string(perm)) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "the token's role does not allow this"})
+		return r, false
+	}
+	u.Username = who
+	return r.WithContext(context.WithValue(r.Context(), userCtxKey, &u)), true
+}
+
 // api authenticates a token and checks perm; responses are JSON.
 func (s *Server) api(perm Perm, h apiHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		if wait := s.guard.Blocked(r, ""); wait > 0 {
-			w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many failed sign-ins from this address"})
+		r, ok := s.apiAuth(perm, w, r)
+		if !ok {
 			return
 		}
-		token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		u, who, err := s.store.tokenUser(r.Context(), strings.TrimSpace(token))
-		if err != nil {
-			s.guard.Fail(r, "", "API token sign-ins")
-			time.Sleep(300 * time.Millisecond)
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing, invalid or expired API token"})
-			return
-		}
-		if !u.Can(string(perm)) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "the token's role does not allow this"})
-			return
-		}
-		u.Username = who
-		r = r.WithContext(context.WithValue(r.Context(), userCtxKey, &u))
 		v, err := h(w, r)
 		if err != nil {
 			var ae apiError
@@ -194,6 +205,10 @@ type apiAgent struct {
 	SeenFrom string     `json:"seen_from"`
 	Enrolled time.Time  `json:"enrolled"`
 	MaxRuns  int        `json:"max_runs"`
+	// Disks: only in GET /api/v1/agents/{id}, for image jobs.
+	Disks []apiDisk `json:"disks,omitempty"`
+	// EnrollLabel is the label of the enrollment code the agent used.
+	EnrollLabel string `json:"enroll_label,omitempty"`
 }
 
 type apiJob struct {
@@ -216,6 +231,15 @@ type apiJob struct {
 	RPOHours       int        `json:"rpo_hours,omitempty"`
 	RPOMet         *bool      `json:"rpo_met,omitempty"`
 	LastGoodBackup *time.Time `json:"last_good_backup,omitempty"`
+	// The settings of the job, in the shapes POST /api/v1/jobs and
+	// PATCH /api/v1/jobs/{id} take.
+	Excludes        []string              `json:"excludes,omitempty"`
+	ImageDisk       *int                  `json:"image_disk,omitempty"`
+	ImagePartitions []int                 `json:"image_partitions,omitempty"`
+	ScheduleSpec    *Schedule             `json:"schedule_spec,omitempty"`
+	Retention       *repo.RetentionPolicy `json:"retention,omitempty"`
+	Options         *apiJobOptionsOut     `json:"options,omitempty"`
+	GroupID         *int64                `json:"group_id,omitempty"`
 }
 
 type apiRun struct {
@@ -239,16 +263,30 @@ type apiRun struct {
 	Expired    bool            `json:"expired"`
 	// Commands: outcome and output of the commands before and after a backup.
 	Commands json.RawMessage `json:"commands,omitempty"`
+	// ImageDisks: the disks of a disk image backup, for restore-disk and
+	// the volumes in the file list.
+	ImageDisks []apiImageDisk `json:"image_disks,omitempty"`
+	// Progress: running runs, as far as the agent reported.
+	Progress *apiProgress `json:"progress,omitempty"`
 }
 
 func toAPIAgent(a Agent) apiAgent {
-	return apiAgent{a.ID, a.Hostname, a.OS + "/" + a.Arch, a.Version, a.Online(), a.LastSeen, a.Recovery, a.LocalIPs, a.RemoteAddr, a.EnrolledAt, max(a.MaxRuns, 1)}
+	return apiAgent{ID: a.ID, Hostname: a.Hostname, OS: a.OS + "/" + a.Arch, Version: a.Version, Online: a.Online(), LastSeen: a.LastSeen,
+		Recovery: a.Recovery, LocalIPs: a.LocalIPs, SeenFrom: a.RemoteAddr, Enrolled: a.EnrolledAt, MaxRuns: max(a.MaxRuns, 1), EnrollLabel: a.EnrollLabel}
 }
 
 func toAPIJob(j Job) apiJob {
 	x := apiJob{ID: j.ID, Name: j.Name, Kind: j.Kind, AgentID: j.AgentID, Agent: j.Hostname, TargetID: j.TargetID, Target: j.TargetName,
 		Enabled: j.Enabled, Schedule: DescribeSchedule(j.Schedule), LastStatus: deref(j.LastStatus), LastFinished: j.LastFinished,
-		Paths: j.Paths, SourceJobID: j.SourceJobID}
+		Paths: j.Paths, SourceJobID: j.SourceJobID,
+		Excludes: j.Excludes, ImageDisk: j.ImageDisk, ImagePartitions: j.ImagePartitions, Options: toAPIJobOptions(j.Options), GroupID: j.GroupID}
+	if sc, err := ParseSchedule(j.Schedule); err == nil && sc.Kind != "cron" {
+		x.ScheduleSpec = &sc
+	}
+	if !j.Retention.Empty() {
+		ret := j.Retention
+		x.Retention = &ret
+	}
 	if j.Enabled {
 		if n := NextRun(j.Schedule, time.Now()); !n.IsZero() {
 			x.NextRun = &n
@@ -261,7 +299,7 @@ func toAPIRunJSON(r Run) apiRun {
 	return apiRun{ID: r.ID, Kind: r.Kind, Status: r.Status, Trigger: r.Trigger, AgentID: r.AgentID, Agent: r.Hostname,
 		JobID: r.JobID, Job: deref(r.JobName), QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		DurationS: int(r.Duration().Seconds()), Snapshot: r.SnapshotID, Message: r.Message, Errors: r.Errors,
-		Stats: r.Stats, Suspicious: r.Anomaly, Expired: r.Expired, Commands: r.Commands}
+		Stats: r.Stats, Suspicious: r.Anomaly, Expired: r.Expired, Commands: r.Commands, ImageDisks: toAPIImageDisks(r)}
 }
 
 func pathInt(r *http.Request, name string) (int64, error) {
@@ -352,7 +390,9 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 			if st := q.Get("status"); st != "" && x.Status != st {
 				continue
 			}
-			out = append(out, toAPIRunJSON(x))
+			j := toAPIRunJSON(x)
+			j.Progress = s.toAPIProgress(r.Context(), x)
+			out = append(out, j)
 		}
 		return out, err
 	}))
@@ -365,7 +405,9 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 		if err != nil {
 			return nil, err
 		}
-		return toAPIRunJSON(x), nil
+		j := toAPIRunJSON(x)
+		j.Progress = s.toAPIProgress(r.Context(), x)
+		return j, nil
 	}))
 	mux.HandleFunc("POST /api/v1/runs/{id}/cancel", s.api(PermRun, func(w http.ResponseWriter, r *http.Request) (any, error) {
 		id, err := pathInt(r, "id")
@@ -406,12 +448,15 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 		list, err := s.store.ListTargets(r.Context())
 		out := []map[string]any{}
 		for _, t := range list { // no credentials
-			out = append(out, map[string]any{"id": t.ID, "name": t.Name, "kind": t.Kind, "location": t.URL,
-				"encrypted": t.Encrypted, "immutable_days": t.S3LockDays})
+			out = append(out, apiTargetJSON(t))
 		}
 		return out, err
 	}))
 	s.registerAPIMore(mux)
+	s.registerAPIManage(mux)
+	s.registerAPIJobs(mux)
+	s.registerAPIFiles(mux)
+	s.registerAPIImage(mux)
 }
 
 // ---- token management pages (My account)

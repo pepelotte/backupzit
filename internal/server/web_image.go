@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,10 +38,16 @@ func (s *Server) partitionSelection(r *http.Request, agentID int64, disk int) []
 			sel = append(sel, n)
 		}
 	}
+	return s.wholeDiskIsNil(r.Context(), agentID, disk, sel)
+}
+
+// wholeDiskIsNil returns nil for no partitions or all partitions of the
+// disk (the whole disk), otherwise the selection.
+func (s *Server) wholeDiskIsNil(ctx context.Context, agentID int64, disk int, sel []int) []int {
 	if len(sel) == 0 {
 		return nil
 	}
-	if a, err := s.store.GetAgent(r.Context(), agentID); err == nil {
+	if a, err := s.store.GetAgent(ctx, agentID); err == nil {
 		for _, d := range a.Disks() {
 			if d.Number == disk && len(d.Partitions) == len(sel) {
 				return nil
