@@ -52,6 +52,7 @@ type fakes struct {
 	targetPatches []map[string]any
 	restores      []map[string]any // POST /runs/{id}/restore and restore-disk, with "_path"
 	revokes       []map[string]any
+	running       map[string]any // a running run in GET /runs
 }
 
 func newFakes(t *testing.T) (*fakes, *connector) {
@@ -248,8 +249,12 @@ func (f *fakes) backupZit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, []any{map[string]any{"id": 9}})
 	case r.Method == "GET" && p == "/runs":
 		old := time.Now().AddDate(0, 0, -200).Format(time.RFC3339)
-		writeJSON(w, 200, []any{map[string]any{"id": 77, "status": "success", "queued_at": time.Now().Format(time.RFC3339)},
-			map[string]any{"id": 5, "status": "success", "queued_at": old}})
+		list := []any{map[string]any{"id": 77, "status": "success", "queued_at": time.Now().Format(time.RFC3339)},
+			map[string]any{"id": 5, "status": "success", "queued_at": old}}
+		if f.running != nil {
+			list = append(list, f.running)
+		}
+		writeJSON(w, 200, list)
 	default:
 		writeJSON(w, 404, map[string]string{"error": "no route " + r.Method + " " + p})
 	}

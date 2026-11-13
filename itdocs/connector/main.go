@@ -220,6 +220,7 @@ func (c *connector) collect(ctx context.Context) (map[string]any, error) {
 		if t, err := time.Parse(time.RFC3339, fmt.Sprint(r["queued_at"])); err == nil && t.Before(since) {
 			continue
 		}
+		runProgress(r)
 		recent = append(recent, r)
 	}
 	return map[string]any{"agents": cap5000(agents), "targets": cap5000(targets), "jobs": cap5000(jobs), "runs": cap5000(recent)}, nil
@@ -241,6 +242,7 @@ func (c *connector) syncRecentRuns(ctx context.Context) {
 		if t, err := time.Parse(time.RFC3339, fmt.Sprint(r["queued_at"])); err == nil && t.Before(since) {
 			continue
 		}
+		runProgress(r)
 		if c.runsSent[toInt(r["id"])] != runKey(r) {
 			changed = append(changed, r)
 		}
@@ -260,7 +262,35 @@ func (c *connector) syncRecentRuns(ctx context.Context) {
 	c.mu.Unlock()
 }
 
-func runKey(r map[string]any) string { return fmt.Sprint(r["status"], "|", r["finished_at"]) }
+// runKey changes when a run must be sent again: a new status, the end, or
+// new progress while it runs.
+func runKey(r map[string]any) string {
+	k := fmt.Sprint(r["status"], "|", r["finished_at"])
+	if st, ok := r["stats"].(map[string]any); ok && r["status"] == "running" {
+		k += fmt.Sprint("|", st["bytes_done"], "|", st["files_done"])
+	}
+	return k
+}
+
+// runProgress puts the progress of a running run into stats, in the
+// platform's fields. BackupZit agents report processed bytes, not
+// uploaded ones, so bytes_uploaded is absent and speed_bps is the
+// processing speed.
+func runProgress(r map[string]any) {
+	p, ok := r["progress"].(map[string]any)
+	delete(r, "progress")
+	if !ok || r["status"] != "running" {
+		return
+	}
+	st := map[string]any{}
+	for from, to := range map[string]string{"bytes_done": "bytes_done", "bytes_total": "bytes_total", "files_done": "files_done",
+		"percent": "percent", "eta_s": "eta_s", "speed_bps": "speed_bps", "estimated": "percent_estimated", "reported_at": "reported_at"} {
+		if v, ok := p[from]; ok {
+			st[to] = v
+		}
+	}
+	r["stats"] = st
+}
 
 func toInt(v any) int64 {
 	switch x := v.(type) {

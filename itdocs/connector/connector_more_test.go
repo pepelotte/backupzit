@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // cloud adds the customer's provisioned storage to the fake console.
@@ -341,5 +343,43 @@ func TestBrowse(t *testing.T) {
 		if res := f.result(id); res["status"] != "failed" || !strings.Contains(fmt.Sprint(res["error"]), want) {
 			t.Errorf("%s: %v", p, res)
 		}
+	}
+}
+
+// Running runs carry their progress as stats and are sent again when it moves.
+func TestRunProgress(t *testing.T) {
+	f, c := newFakes(t)
+	now := time.Now().Format(time.RFC3339)
+	prog := func(done int) map[string]any {
+		return map[string]any{"id": 90, "status": "running", "queued_at": now, "progress": map[string]any{
+			"bytes_done": done, "bytes_total": 1000, "percent": done / 10, "speed_bps": 50, "eta_s": (1000 - done) / 50, "reported_at": now}}
+	}
+	f.mu.Lock()
+	f.running = prog(400)
+	f.mu.Unlock()
+	c.syncRecentRuns(context.Background())
+	run := func(i int) map[string]any {
+		for _, r := range f.statuses[i]["runs"].([]any) {
+			if r := r.(map[string]any); r["id"] == float64(90) {
+				return r
+			}
+		}
+		return nil
+	}
+	r := run(0)
+	st, _ := r["stats"].(map[string]any)
+	if r["progress"] != nil || st["bytes_done"] != float64(400) || st["percent"] != float64(40) || st["eta_s"] != float64(12) || st["speed_bps"] != float64(50) {
+		t.Fatalf("running run: %v", r)
+	}
+	c.syncRecentRuns(context.Background())
+	if len(f.statuses) != 1 {
+		t.Errorf("unchanged progress sent again")
+	}
+	f.mu.Lock()
+	f.running = prog(700)
+	f.mu.Unlock()
+	c.syncRecentRuns(context.Background())
+	if len(f.statuses) != 2 || len(f.statuses[1]["runs"].([]any)) != 1 || run(1)["stats"].(map[string]any)["bytes_done"] != float64(700) {
+		t.Errorf("progress not sent: %v", f.statuses)
 	}
 }
