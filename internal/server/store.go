@@ -210,6 +210,36 @@ func (s *Store) CreateTarget(ctx context.Context, t Target) (int64, error) {
 	return id, err
 }
 
+// UpdateTarget stores a changed name and credentials of a target (its
+// type, location and recovery key never change).
+func (s *Store) UpdateTarget(ctx context.Context, t Target) error {
+	t.Name = strings.TrimSpace(t.Name)
+	if t.Name == "" {
+		return errors.New("name is required")
+	}
+	switch {
+	case t.Kind == "s3" && (t.S3AccessKey == "" || t.S3SecretKey == ""):
+		return errors.New("S3 access key and secret key are required")
+	case t.Kind == "smb" && t.SMBPassword == "":
+		return errors.New("SMB password is required")
+	case t.Kind == "sftp" && t.SFTPPassword == "" && t.SFTPKey == "":
+		return errors.New("SFTP password or private key is required")
+	case t.Kind == "azure" && t.AzureKey == "" && t.AzureSAS == "":
+		return errors.New("the storage account key or a SAS token is required")
+	}
+	s.encryptTarget(&t)
+	ct, err := s.db.Exec(ctx, `UPDATE storage_targets SET name=$2, sftp_password=$3, s3_access_key=$4, s3_secret_key=$5, smb_password=$6, smb_domain=$7,
+		azure_key=$8, azure_sas=$9 WHERE id=$1`, t.ID, t.Name, t.SFTPPassword, strings.TrimSpace(t.S3AccessKey), t.S3SecretKey, t.SMBPassword,
+		strings.TrimSpace(t.SMBDomain), t.AzureKey, t.AzureSAS)
+	if err != nil && strings.Contains(err.Error(), "duplicate key") {
+		return errors.New("a storage target with that name already exists")
+	}
+	if err == nil && ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
 const targetCols = `id, name, kind, url, sftp_password, sftp_key, sftp_host_key, created_at, s3_access_key, s3_secret_key, s3_region, smb_password, smb_domain, encrypted, repo_password, s3_lock_days, hardened_key, hardened_fingerprint, azure_key, azure_sas`
 
 func scanTarget(r pgx.Row) (Target, error) {

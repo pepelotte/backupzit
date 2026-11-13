@@ -193,6 +193,26 @@ func TestAPITargetKeyAndCodes(t *testing.T) {
 		}
 	}
 
+	// Name and credentials change; type, location and key stay.
+	smb, err := e.store.CreateTarget(ctx, server.Target{Name: "Office NAS", Kind: "smb", URL: "smb://backup@nas/share", SMBPassword: "old", Encrypted: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, out := apiSend(t, e, adm, "PATCH", fmt.Sprintf("/api/v1/targets/%d", smb), `{"smb_password":"new","name":"Office NAS 2"}`); code != 200 || !strings.Contains(out, `"Office NAS 2"`) || strings.Contains(out, "new") {
+		t.Errorf("patch: %d %s", code, out)
+	}
+	if tg, _ := e.store.GetTarget(ctx, smb); tg.SMBPassword != "new" || tg.Name != "Office NAS 2" || tg.URL != "smb://backup@nas/share" || tg.RecoveryKey == "" {
+		t.Errorf("patched target: %+v", tg)
+	}
+	for body, want := range map[string]int{`{"smb_password":""}`: 400, `{"url":"smb://x@y/z"}`: 400, `{"name":"Cloud"}`: 400} {
+		if code, out := apiSend(t, e, adm, "PATCH", fmt.Sprintf("/api/v1/targets/%d", smb), body); code != want {
+			t.Errorf("patch %s: %d %s", body, code, out)
+		}
+	}
+	if code, _ := apiSend(t, e, adm, "PATCH", "/api/v1/targets/9999", `{"name":"x"}`); code != 404 {
+		t.Errorf("patch unknown target: %d", code)
+	}
+
 	// Codes: listed without their secret, revoked by label prefix or id.
 	for _, l := range []string{"itdocs:c1:recovery:d1", "itdocs:c1:recovery:d2", "itdocs:c1:d3"} {
 		if code, out := apiPost(t, e, adm, "/api/v1/agents/enroll-code", `{"ttl_minutes":60,"label":"`+l+`"}`); code != 202 {

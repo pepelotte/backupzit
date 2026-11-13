@@ -1461,6 +1461,34 @@
           }
         },
         "type": "object"
+      },
+      "TargetUpdate": {
+        "description": "Name and credentials of a storage target; fields not given stay. Type, location and recovery key cannot change.",
+        "properties": {
+          "azure_secret": {
+            "description": "Account key or SAS token, as the target uses",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "s3_access_key": {
+            "type": "string"
+          },
+          "s3_secret_key": {
+            "type": "string"
+          },
+          "sftp_password": {
+            "type": "string"
+          },
+          "smb_domain": {
+            "type": "string"
+          },
+          "smb_password": {
+            "type": "string"
+          }
+        },
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -2625,6 +2653,52 @@
           }
         },
         "summary": "Create a storage target",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
+    "/api/v1/targets/{id}": {
+      "patch": {
+        "description": "Role: administrator. For new passwords or rotated keys; agents use them from their next run.",
+        "operationId": "updateTarget",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Target"
+                }
+              }
+            },
+            "description": "Target"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "summary": "Change a storage target's name or credentials",
         "tags": [
           "storage"
         ]

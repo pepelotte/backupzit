@@ -145,6 +145,59 @@ func (s *Server) registerAPIManage(mux *http.ServeMux) {
 		}
 		return out, nil
 	}))
+	mux.HandleFunc("PATCH /api/v1/targets/{id}", s.api(PermStorage, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		id, err := pathInt(r, "id")
+		if err != nil {
+			return nil, err
+		}
+		// Name and credentials; fields not given stay.
+		var req struct {
+			Name         *string `json:"name"`
+			SFTPPassword *string `json:"sftp_password"`
+			S3AccessKey  *string `json:"s3_access_key"`
+			S3SecretKey  *string `json:"s3_secret_key"`
+			SMBPassword  *string `json:"smb_password"`
+			SMBDomain    *string `json:"smb_domain"`
+			AzureSecret  *string `json:"azure_secret"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			return nil, err
+		}
+		t, err := s.store.GetTarget(r.Context(), id)
+		if err != nil {
+			return nil, err
+		}
+		set := func(dst *string, v *string) {
+			if v != nil {
+				*dst = *v
+			}
+		}
+		set(&t.Name, req.Name)
+		set(&t.SFTPPassword, req.SFTPPassword)
+		set(&t.S3AccessKey, req.S3AccessKey)
+		set(&t.S3SecretKey, req.S3SecretKey)
+		set(&t.SMBPassword, req.SMBPassword)
+		set(&t.SMBDomain, req.SMBDomain)
+		if req.AzureSecret != nil {
+			if t.AzureSAS != "" {
+				t.AzureSAS = strings.TrimPrefix(strings.TrimSpace(*req.AzureSecret), "?")
+			} else {
+				t.AzureKey = strings.TrimSpace(*req.AzureSecret)
+			}
+		}
+		if err := s.store.UpdateTarget(r.Context(), t); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return nil, err
+			}
+			return nil, apiErr(http.StatusBadRequest, "%s", err.Error())
+		}
+		s.audit(r, "storage.update", "%s (%s) %s: name or credentials changed", t.Name, t.Kind, t.URL)
+		saved, err := s.store.GetTarget(r.Context(), id)
+		if err != nil {
+			return nil, err
+		}
+		return apiTargetJSON(saved), nil
+	}))
 	mux.HandleFunc("POST /api/v1/targets/{id}/test", s.api(PermStorage, func(w http.ResponseWriter, r *http.Request) (any, error) {
 		id, err := pathInt(r, "id")
 		if err != nil {

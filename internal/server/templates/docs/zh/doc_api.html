@@ -25,6 +25,7 @@
   <tr><td><code>GET /api/v1/targets</code></td><td>查看者</td><td>存储目标（不含凭据）</td></tr>
   <tr><td><code>POST /api/v1/targets</code></td><td>管理员</td><td>使用<a href="/targets">存储</a>表单中的字段创建存储目标，例如 <code>{"name": "Customer A", "kind": "s3", "s3_endpoint": "…", "s3_bucket": "…", "s3_access_key": "…", "s3_secret_key": "…", "s3_lock_days": 30}</code>；除非指定 <code>"encrypted": false</code>，否则加密。会测试连接，并仅返回一次恢复密钥——请妥善保管。使用 <code>"recovery_key_from": 3</code> 时，它使用存储目标 3 的恢复密钥且不返回密钥——例如 NAS 和云副本共用一个密钥</td></tr>
   <tr><td><code>POST /api/v1/targets/{id}/test</code></td><td>管理员</td><td>测试与存储的连接：<code>{"ok": true, "message": "…"}</code></td></tr>
+  <tr><td><code>PATCH /api/v1/targets/{id}</code></td><td>管理员</td><td>更改存储目标的名称或凭据（<code>smb_password</code>、<code>s3_access_key</code>、<code>s3_secret_key</code>、<code>sftp_password</code>、<code>azure_secret</code> 等）；代理从下次运行起使用</td></tr>
   <tr><td><code>POST /api/v1/agents/enroll-code</code></td><td>备份操作员</td><td>用于注册一个代理的代码，有效期 7 天：<code>{"code": "BZ1-…", "expires": "…"}</code>。可选请求体 <code>{"ttl_minutes": 120, "single_use": true, "label": "…"}</code>：更短的有效期、仅限一个代理，以及代理保留的标签（<code>GET /api/v1/agents</code> 中的 <code>enroll_label</code>）</td></tr>
   <tr><td><code>GET /api/v1/agents/enroll-codes?label_prefix=</code></td><td>备份操作员</td><td>有效的注册码和恢复码，不含代码本身：<code>[{"id": 7, "label": "…", "single_use": true, "expires": "…"}]</code></td></tr>
   <tr><td><code>POST /api/v1/agents/enroll-codes/revoke</code></td><td>备份操作员</td><td>撤销一个代码 <code>{"id": 7}</code>，或撤销标签以某前缀开头的所有代码 <code>{"label_prefix": "…"}</code>；已注册的代理保留</td></tr>
